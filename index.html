@@ -1,10 +1,301 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dungeon Generator</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>Dungeon Generator Standalone</title>
+  <style>
+:root {
+  color-scheme: light;
+  --bg: #f4f0e8;
+  --panel: #fffdf8;
+  --ink: #24211c;
+  --muted: #6d665b;
+  --line: #cfc4b2;
+  --accent: #526f6a;
+  --accent-strong: #324d49;
+  --danger: #8d4e3d;
+  --gold: #b88a3b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--accent-strong);
+  background: var(--accent);
+  color: #fff;
+  padding: 0.55rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--accent-strong);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.toolbar {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.brand-block {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: end;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.35rem;
+}
+
+h2 {
+  font-size: 1rem;
+}
+
+p {
+  color: var(--muted);
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 0.65rem;
+}
+
+label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.check-control {
+  align-content: end;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem;
+  background: #fff;
+}
+
+.check-control input {
+  width: auto;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 0.45rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.generation-status {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(180px, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.generation-status[hidden] {
+  display: none;
+}
+
+progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  min-height: 0;
+}
+
+.map-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.map-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+}
+
+.floor-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.floor-tabs button {
+  padding: 0.35rem 0.55rem;
+  background: #fff;
+  color: var(--accent-strong);
+}
+
+.floor-tabs button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.map-frame {
+  width: min(900px, 100%);
+  height: min(900px, calc(100vh - 260px));
+  min-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #1c1b18;
+  border-radius: 8px;
+}
+
+.map-frame.camera-follow {
+  overflow: hidden;
+}
+
+.map-stage {
+  position: relative;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+canvas {
+  display: block;
+  image-rendering: auto;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.movement-pad {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(88px, 1fr));
+  gap: 0.5rem;
+}
+
+.side-panel {
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1rem;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.info-block {
+  display: grid;
+  gap: 0.55rem;
+  min-height: 0;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+}
+
+ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  max-height: 160px;
+  overflow: auto;
+}
+
+li {
+  margin-bottom: 0.35rem;
+}
+
+.save-block {
+  min-height: 0;
+}
+
+textarea {
+  min-height: 320px;
+  height: 100%;
+  resize: none;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 980px) {
+  .control-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+</style>
 </head>
 <body>
   <main class="app-shell">
@@ -150,6 +441,2139 @@
     </section>
   </main>
 
-  <script type="module" src="js/app.js"></script>
+  <script>
+
+/* ---- dungeon-state.js ---- */
+const SIZE_PRESETS = {
+  small: { label: "Small", pixelWidth: 1200, pixelHeight: 1200, floorGridWidth: 2, floorGridHeight: 2, wallGridWidth: 24, wallGridHeight: 24 },
+  medium: { label: "Medium", pixelWidth: 2400, pixelHeight: 2400, floorGridWidth: 4, floorGridHeight: 4, wallGridWidth: 48, wallGridHeight: 48 },
+  large: { label: "Large", pixelWidth: 4800, pixelHeight: 4800, floorGridWidth: 8, floorGridHeight: 8, wallGridWidth: 96, wallGridHeight: 96 },
+  super: { label: "Super", pixelWidth: 9600, pixelHeight: 9600, floorGridWidth: 16, floorGridHeight: 16, wallGridWidth: 192, wallGridHeight: 192 },
+};
+
+const FLOOR_TILES = {
+  stone_dark_square: "../Tiles/Floor/Stone - Dark/Rock_Tiles_B_05.jpg",
+  stone_rough_square: "../Tiles/Floor/Stone - Rough/Rock_Tiles_B_01.jpg",
+  stone_sandstone_square: "../Tiles/Floor/Stone - Sandstone/Rock_Tiles_B_03.jpg",
+  stone_standard_square: "../Tiles/Floor/Stone - Standard/Rock_Tiles_B_02.jpg",
+  stone_taiga_square: "../Tiles/Floor/Stone - Taiga/Rock_Tiles_B_04.jpg",
+  stone_standard_hex: "../Tiles/Floor/Stone - Standard/Stone_Hexagonal_Tiles_02_C.jpg",
+};
+
+function makeEmptyWallCell(x, y) {
+  return {
+    wallX: x,
+    wallY: y,
+    walkable: false,
+    spaceType: "void",
+    roomId: null,
+    corridorId: null,
+    edges: { north: "void", east: "void", south: "void", west: "void" },
+    edgeFeatures: { north: null, east: null, south: null, west: null },
+    door: null,
+    secretDoor: null,
+    eventLink: null,
+    rolledEvent: null,
+    verticalConnection: null,
+    visited: false,
+    revealed: false,
+    labels: [],
+  };
+}
+
+function makeFloorCell(x, y, tile) {
+  return {
+    floorX: x,
+    floorY: y,
+    tile,
+    rotation: 0,
+    flipped: false,
+    variant: null,
+    notes: "",
+  };
+}
+
+function createDungeonState(options) {
+  const preset = SIZE_PRESETS[options.size] ?? SIZE_PRESETS.medium;
+  const requestedFloorCount = options.floorCount ?? (options.size === "super" ? 2 : 1);
+  const maxFloorCount = 10;
+  const minFloorCount = options.size === "super" ? 2 : 1;
+  const floorCount = Math.max(minFloorCount, Math.min(requestedFloorCount, maxFloorCount));
+  const themeId = options.themeId ?? "standard_dungeon";
+  const dungeon = {
+    schemaVersion: 1,
+    generatorVersion: "0.1",
+    dungeonId: `dng_${Date.now().toString(36)}`,
+    name: options.name ?? "Generated Dungeon",
+    siteType: "standard_dungeon",
+    themeId,
+    theme: options.theme ?? null,
+    themeInfluences: options.themeInfluences ?? {
+      objectPalette: [],
+      encounterFilters: [],
+      dressingTables: [],
+    },
+    threatLevel: options.threatLevel ?? 1,
+    tileSetId: "current_tiles_folder",
+    sizeCategory: options.size,
+    pixelWidth: preset.pixelWidth,
+    pixelHeight: preset.pixelHeight,
+    floorMode: "square-texture",
+    floorTileSize: 600,
+    floorGridWidth: preset.floorGridWidth,
+    floorGridHeight: preset.floorGridHeight,
+    wallCellSize: 50,
+    wallGridWidth: preset.wallGridWidth,
+    wallGridHeight: preset.wallGridHeight,
+    currentFloor: 0,
+    floorCount,
+    seed: options.seed,
+    createdAt: new Date().toISOString(),
+    turn: 1,
+    lightTurnsRemaining: 6,
+    player: {
+      floorIndex: 0,
+      wallX: 1,
+      wallY: 1,
+      token: "party",
+      facing: "north",
+    },
+    eventTables: {
+      standard_room: "tables/events/standard-room.json",
+      standard_corridor: "tables/events/standard-corridor.json",
+      boss_room: "tables/events/boss-room.json",
+      floor_connection: "tables/events/floor-connection.json",
+    },
+    generationPlan: options.generationPlan ?? null,
+    rooms: [],
+    corridors: [],
+    doors: [],
+    floorConnections: [],
+    assetPlacements: [],
+    eventLog: [],
+    floors: [],
+  };
+
+  for (let f = 0; f < floorCount; f += 1) {
+    const floorGrid = Array.from({ length: preset.floorGridHeight }, (_, y) =>
+      Array.from({ length: preset.floorGridWidth }, (_, x) => makeFloorCell(x, y, options.floorTile))
+    );
+    const wallGrid = Array.from({ length: preset.wallGridHeight }, (_, y) =>
+      Array.from({ length: preset.wallGridWidth }, (_, x) => makeEmptyWallCell(x, y))
+    );
+    dungeon.floors.push({
+      floorIndex: f,
+      name: `Floor ${f + 1}`,
+      layerDepth: f,
+      layerSizeCategory: options.size,
+      floorGrid,
+      wallGrid,
+      connectionsUp: [],
+      connectionsDown: [],
+    });
+  }
+
+  return dungeon;
+}
+
+function getCurrentFloor(dungeon) {
+  return dungeon.floors[dungeon.currentFloor];
+}
+
+function getCell(dungeon, floorIndex, x, y) {
+  const floor = dungeon.floors[floorIndex];
+  if (!floor || y < 0 || x < 0 || y >= dungeon.wallGridHeight || x >= dungeon.wallGridWidth) return null;
+  return floor.wallGrid[y][x];
+}
+
+function inBounds(dungeon, x, y) {
+  return x >= 0 && y >= 0 && x < dungeon.wallGridWidth && y < dungeon.wallGridHeight;
+}
+
+function serializeDungeon(dungeon) {
+  return JSON.stringify(dungeon, null, 2);
+}
+
+function parseDungeon(text) {
+  const parsed = JSON.parse(text);
+  validateDungeon(parsed);
+  return parsed;
+}
+
+function validateDungeon(dungeon) {
+  if (!dungeon || dungeon.schemaVersion !== 1) throw new Error("Unsupported or missing schemaVersion.");
+  if (!Array.isArray(dungeon.floors) || dungeon.floors.length !== dungeon.floorCount) {
+    throw new Error("Floor array does not match floorCount.");
+  }
+  for (const floor of dungeon.floors) {
+    if (!Array.isArray(floor.floorGrid) || floor.floorGrid.length !== dungeon.floorGridHeight) {
+      throw new Error(`Invalid floorGrid on floor ${floor.floorIndex}.`);
+    }
+    if (!Array.isArray(floor.wallGrid) || floor.wallGrid.length !== dungeon.wallGridHeight) {
+      throw new Error(`Invalid wallGrid on floor ${floor.floorIndex}.`);
+    }
+  }
+  if (!inBounds(dungeon, dungeon.player.wallX, dungeon.player.wallY)) {
+    throw new Error("Player position is outside the dungeon.");
+  }
+}
+
+
+/* ---- dungeon-generator.js ---- */
+
+const DIRS = [
+  { name: "north", dx: 0, dy: -1, opposite: "south" },
+  { name: "east", dx: 1, dy: 0, opposite: "west" },
+  { name: "south", dx: 0, dy: 1, opposite: "north" },
+  { name: "west", dx: -1, dy: 0, opposite: "east" },
+];
+
+const DIR_BY_NAME = Object.fromEntries(DIRS.map((dir) => [dir.name, dir]));
+const SECRET_DOOR_CHANCE = 0.08;
+const OPEN_DOOR_CHANCE = 0.15;
+const LOCKED_ROOM_CHANCE = 0.1;
+const MAX_FLOORS = 10;
+const FLOOR_CHANCE = {
+  small: { start: 0.1, decay: 0.03, min: 1 },
+  medium: { start: 0.2, decay: 0.03, min: 1 },
+  large: { start: 0.3, decay: 0.02, min: 1 },
+  super: { start: 0.4, decay: 0.02, min: 2 },
+};
+
+const DUNGEON_THEMES = {
+  standard_dungeon: {
+    label: "Standard Dungeon",
+    objectPalette: ["stone_walls", "wooden_doors", "pillars", "pits", "stairs"],
+    encounterFilters: ["dungeon", "any"],
+    dressingTables: ["standard_room", "standard_corridor"],
+  },
+  crypt: {
+    label: "Crypt",
+    objectPalette: ["stone_walls", "pillars", "pits", "stairs", "sealed_doors"],
+    encounterFilters: ["undead", "cult", "vermin"],
+    dressingTables: ["crypt_room", "crypt_corridor"],
+  },
+  ruined_stronghold: {
+    label: "Ruined Stronghold",
+    objectPalette: ["stone_walls", "wooden_doors", "wall_fixes", "pillars", "rubble"],
+    encounterFilters: ["humanoid", "beast", "vermin"],
+    dressingTables: ["ruin_room", "ruin_corridor"],
+  },
+  flooded_halls: {
+    label: "Flooded Halls",
+    objectPalette: ["stone_walls", "pits", "stairs", "water_hazards", "alcoves"],
+    encounterFilters: ["aquatic", "ooze", "vermin"],
+    dressingTables: ["flooded_room", "flooded_corridor"],
+  },
+  occult_depths: {
+    label: "Occult Depths",
+    objectPalette: ["stone_walls", "black_patch_pits", "pillars", "occult_events", "stairs"],
+    encounterFilters: ["occult", "demon", "undead"],
+    dressingTables: ["occult_room", "occult_corridor"],
+  },
+};
+
+const GENERATION_STEP_DELAY = 20;
+
+function makeRng(seedText) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seedText.length; i += 1) {
+    h ^= seedText.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return function rng() {
+    h += 0x6D2B79F5;
+    let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randInt(rng, min, max) {
+  return Math.floor(rng() * (max - min + 1)) + min;
+}
+
+function choose(rng, items) {
+  return items[Math.floor(rng() * items.length)];
+}
+
+function generateDungeon(options) {
+  const rng = makeRng(options.seed || "dungeon");
+  const floorCount = determineFloorCount(options, rng);
+  const theme = DUNGEON_THEMES[options.themeId] ?? DUNGEON_THEMES.standard_dungeon;
+  const dungeon = createDungeonState({
+    size: options.size,
+    floorCount,
+    seed: options.seed,
+    floorTile: options.floorTile,
+    themeId: options.themeId ?? "standard_dungeon",
+    theme,
+    themeInfluences: {
+      objectPalette: theme.objectPalette,
+      encounterFilters: theme.encounterFilters,
+      dressingTables: theme.dressingTables,
+    },
+    generationPlan: makeGenerationPlan(options, floorCount, theme),
+    name: `Dungeon ${String(options.seed || "seed").slice(0, 18)}`,
+  });
+
+  for (let f = 0; f < dungeon.floorCount; f += 1) {
+    generateFloor(dungeon, f, rng, options);
+  }
+  addFloorConnections(dungeon, rng);
+  finishDungeonGeneration(dungeon);
+
+  return dungeon;
+}
+
+async function generateDungeonAsync(options, onProgress) {
+  const rng = makeRng(options.seed || "dungeon");
+  const floorCount = determineFloorCount(options, rng);
+  const theme = DUNGEON_THEMES[options.themeId] ?? DUNGEON_THEMES.standard_dungeon;
+  const dungeon = createDungeonState({
+    size: options.size,
+    floorCount,
+    seed: options.seed,
+    floorTile: options.floorTile,
+    themeId: options.themeId ?? "standard_dungeon",
+    theme,
+    themeInfluences: {
+      objectPalette: theme.objectPalette,
+      encounterFilters: theme.encounterFilters,
+      dressingTables: theme.dressingTables,
+    },
+    generationPlan: makeGenerationPlan(options, floorCount, theme),
+    name: `Dungeon ${String(options.seed || "seed").slice(0, 18)}`,
+  });
+
+  onProgress?.({ phase: "start", floorIndex: -1, floorCount, message: `Preparing ${theme.label}.` });
+
+  for (let f = 0; f < dungeon.floorCount; f += 1) {
+    onProgress?.({ phase: "floor", floorIndex: f, floorCount, message: `Building layer ${f + 1} of ${floorCount}.` });
+    await delay(GENERATION_STEP_DELAY);
+    generateFloor(dungeon, f, rng, options);
+  }
+
+  onProgress?.({ phase: "connections", floorIndex: floorCount - 1, floorCount, message: "Linking stairs and passages between layers." });
+  await delay(GENERATION_STEP_DELAY);
+  addFloorConnections(dungeon, rng);
+  finishDungeonGeneration(dungeon);
+
+  onProgress?.({ phase: "complete", floorIndex: floorCount - 1, floorCount, message: "Dungeon ready." });
+
+  return dungeon;
+}
+
+function finishDungeonGeneration(dungeon) {
+  const firstRoom = dungeon.rooms.find((room) => room.floorIndex === 0);
+  if (firstRoom) {
+    dungeon.player.floorIndex = 0;
+    dungeon.player.wallX = Math.floor(firstRoom.x + firstRoom.width / 2);
+    dungeon.player.wallY = Math.floor(firstRoom.y + firstRoom.height / 2);
+    markVisited(dungeon, dungeon.player.floorIndex, dungeon.player.wallX, dungeon.player.wallY);
+  }
+
+  dungeon.eventLog.push({
+    turn: 1,
+    text: `Generated ${dungeon.rooms.length} rooms across ${dungeon.floorCount} layer(s).`,
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function determineFloorCount(options, rng) {
+  const rule = FLOOR_CHANCE[options.size] ?? FLOOR_CHANCE.medium;
+  const requestedMax = Number(options.floorCount) || MAX_FLOORS;
+  const maxFloors = Math.max(rule.min, Math.min(requestedMax, MAX_FLOORS));
+  let floorCount = rule.min;
+  while (floorCount < maxFloors) {
+    const generatedAfterFirst = Math.max(0, floorCount - 1);
+    const chance = Math.max(0, rule.start - rule.decay * generatedAfterFirst);
+    if (rng() >= chance) break;
+    floorCount += 1;
+  }
+  return floorCount;
+}
+
+function makeGenerationPlan(options, floorCount, theme) {
+  return {
+    sizeCategory: options.size,
+    floorCount,
+    floorConnectionPolicy: "size_based_recursive_chance",
+    floorChanceRule: FLOOR_CHANCE[options.size] ?? FLOOR_CHANCE.medium,
+    layerBuildMode: "one_layer_at_a_time",
+    variableLayerSizes: "planned",
+    skipFloorConnections: "planned",
+    theme: theme.label,
+    themeInfluences: {
+      objectPalette: theme.objectPalette,
+      encounterFilters: theme.encounterFilters,
+      dressingTables: theme.dressingTables,
+    },
+  };
+}
+
+function generateFloor(dungeon, floorIndex, rng, options) {
+  const plan = roomPlanForDungeon(dungeon, options, rng);
+  const roomTarget = plan.totalRooms;
+  const rooms = [];
+  let attempts = 0;
+
+  while (rooms.length < roomTarget && attempts < roomTarget * 80) {
+    attempts += 1;
+    const width = randInt(rng, 2, Math.min(10, Math.floor(dungeon.wallGridWidth / 4)));
+    const height = randInt(rng, 2, Math.min(10, Math.floor(dungeon.wallGridHeight / 4)));
+    const x = randInt(rng, 2, dungeon.wallGridWidth - width - 3);
+    const y = randInt(rng, 2, dungeon.wallGridHeight - height - 3);
+    const room = {
+      id: `room_${floorIndex}_${rooms.length + 1}`,
+      floorIndex,
+      x,
+      y,
+      width,
+      height,
+      doors: [],
+      accessType: rooms.length < plan.openChambers ? "open_chamber" : "door_room",
+      eventLink: "standard_room",
+      rolledEvent: null,
+      tags: [],
+    };
+    if (rooms.every((other) => !rectsOverlap(bufferRect(room, 2), bufferRect(other, 0)))) {
+      rooms.push(room);
+      carveRoom(dungeon, room);
+    }
+  }
+
+  if (!rooms.length) return;
+
+  const sorted = [...rooms].sort((a, b) => a.x - b.x || a.y - b.y);
+  for (let i = 1; i < sorted.length; i += 1) {
+    connectRooms(dungeon, sorted[i - 1], sorted[i], rng);
+  }
+
+  addLoops(dungeon, sorted, rng);
+  addDeadEnds(dungeon, floorIndex, rng, Math.max(2, Math.floor(rooms.length / 4)));
+  assignBossRoom(dungeon, floorIndex, rooms);
+  finalizeDoorStates(dungeon, floorIndex, rng);
+  deriveEdges(dungeon, floorIndex);
+  revealAroundRooms(dungeon, floorIndex, rooms);
+}
+
+function roomPlanForDungeon(dungeon, options, rng) {
+  const minimumRooms = Math.max(6, Math.floor(Math.min(dungeon.pixelWidth, dungeon.pixelHeight) / 100));
+  const maximumRooms = Math.floor(minimumRooms * 2.5);
+  const requestedRooms = Number(options.roomCount) || 0;
+  const totalRooms = requestedRooms > 0
+    ? Math.max(minimumRooms, Math.min(requestedRooms, maximumRooms))
+    : randInt(rng, minimumRooms, maximumRooms);
+  const openChambers = Math.max(1, Math.floor(minimumRooms / 8));
+  return { minimumRooms, maximumRooms, requestedRooms, totalRooms, openChambers };
+}
+
+function bufferRect(rect, buffer) {
+  return {
+    x: rect.x - buffer,
+    y: rect.y - buffer,
+    width: rect.width + buffer * 2,
+    height: rect.height + buffer * 2,
+  };
+}
+
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function carveRoom(dungeon, room) {
+  const floor = dungeon.floors[room.floorIndex];
+  for (let y = room.y; y < room.y + room.height; y += 1) {
+    for (let x = room.x; x < room.x + room.width; x += 1) {
+      const cell = floor.wallGrid[y][x];
+      cell.walkable = true;
+      cell.spaceType = "room";
+      cell.roomId = room.id;
+      cell.eventLink = room.eventLink;
+      cell.revealed = false;
+    }
+  }
+  dungeon.rooms.push(room);
+}
+
+function center(room) {
+  return {
+    x: Math.floor(room.x + room.width / 2),
+    y: Math.floor(room.y + room.height / 2),
+  };
+}
+
+function connectRooms(dungeon, a, b, rng) {
+  const start = doorwayPoint(a, center(b));
+  const end = doorwayPoint(b, center(a));
+  const corridorId = `corridor_${dungeon.corridors.length + 1}`;
+  const horizontalFirst = rng() > 0.5;
+  const cells = [];
+
+  if (horizontalFirst) {
+    carveCorridorLine(dungeon, a.floorIndex, start.corridorAnchor.x, start.corridorAnchor.y, end.corridorAnchor.x, start.corridorAnchor.y, corridorId, cells);
+    carveCorridorLine(dungeon, a.floorIndex, end.corridorAnchor.x, start.corridorAnchor.y, end.corridorAnchor.x, end.corridorAnchor.y, corridorId, cells);
+  } else {
+    carveCorridorLine(dungeon, a.floorIndex, start.corridorAnchor.x, start.corridorAnchor.y, start.corridorAnchor.x, end.corridorAnchor.y, corridorId, cells);
+    carveCorridorLine(dungeon, a.floorIndex, start.corridorAnchor.x, end.corridorAnchor.y, end.corridorAnchor.x, end.corridorAnchor.y, corridorId, cells);
+  }
+
+  addRoomConnection(dungeon, a, start, corridorId, connectionKindForRoom(a, rng));
+  addRoomConnection(dungeon, b, end, corridorId, connectionKindForRoom(b, rng));
+  dungeon.corridors.push({ id: corridorId, floorIndex: a.floorIndex, cells, width: 2, kind: "connector" });
+}
+
+function carveCorridorLine(dungeon, floorIndex, x1, y1, x2, y2, corridorId, cells) {
+  const floor = dungeon.floors[floorIndex];
+  const dx = Math.sign(x2 - x1);
+  const dy = Math.sign(y2 - y1);
+  let x = x1;
+  let y = y1;
+  while (x !== x2 || y !== y2) {
+    carveCorridorBlock(floor, x, y, corridorId, cells);
+    if (x !== x2) x += dx;
+    if (y !== y2) y += dy;
+  }
+  carveCorridorBlock(floor, x2, y2, corridorId, cells);
+}
+
+function carveCorridorBlock(floor, x, y, corridorId, cells) {
+  for (let oy = 0; oy < 2; oy += 1) {
+    for (let ox = 0; ox < 2; ox += 1) {
+      const cell = floor.wallGrid[y + oy]?.[x + ox];
+      if (!cell) continue;
+      if (cell.spaceType === "room") continue;
+      cell.walkable = true;
+      cell.spaceType = "corridor";
+      cell.corridorId = corridorId;
+      cell.eventLink = "standard_corridor";
+      cells.push([x + ox, y + oy]);
+    }
+  }
+}
+
+function doorwayPoint(room, toward) {
+  const from = center(room);
+  const deltaX = toward.x - from.x;
+  const deltaY = toward.y - from.y;
+  const dx = Math.sign(deltaX);
+  const dy = Math.sign(deltaY);
+  let wall = "north";
+  let offset = 0;
+  let dir = DIR_BY_NAME.north;
+  if (Math.abs(deltaX) > Math.abs(deltaY)) {
+    wall = dx > 0 ? "east" : "west";
+    dir = dx > 0 ? DIR_BY_NAME.east : DIR_BY_NAME.west;
+    offset = Math.max(0, Math.min(room.height - 1, from.y - room.y));
+  } else {
+    wall = dy > 0 ? "south" : "north";
+    dir = dy > 0 ? DIR_BY_NAME.south : DIR_BY_NAME.north;
+    offset = Math.max(0, Math.min(room.width - 1, from.x - room.x));
+  }
+
+  const inside = doorInsidePosition(room, wall, offset);
+  const outside = { x: inside.x + dir.dx, y: inside.y + dir.dy };
+  const corridorAnchor = corridorAnchorForDoor(room, wall, offset, outside);
+  return { wall, offset, dir, inside, outside, corridorAnchor };
+}
+
+function doorInsidePosition(room, wall, offset) {
+  if (wall === "north") return { x: room.x + offset, y: room.y };
+  if (wall === "south") return { x: room.x + offset, y: room.y + room.height - 1 };
+  if (wall === "east") return { x: room.x + room.width - 1, y: room.y + offset };
+  return { x: room.x, y: room.y + offset };
+}
+
+function corridorAnchorForDoor(room, wall, offset, outside) {
+  if (wall === "north") return { x: Math.max(room.x, Math.min(room.x + room.width - 2, room.x + offset)), y: room.y - 2 };
+  if (wall === "south") return { x: Math.max(room.x, Math.min(room.x + room.width - 2, room.x + offset)), y: room.y + room.height };
+  if (wall === "west") return { x: room.x - 2, y: Math.max(room.y, Math.min(room.y + room.height - 2, room.y + offset)) };
+  return { x: room.x + room.width, y: Math.max(room.y, Math.min(room.y + room.height - 2, room.y + offset)) };
+}
+
+function connectionKindForRoom(room, rng) {
+  if (room.accessType === "open_chamber") return "open_chamber";
+  return rng() < SECRET_DOOR_CHANCE ? "secret" : "normal";
+}
+
+function addRoomConnection(dungeon, room, point, corridorId, kind) {
+  const doorType = kind === "open_chamber" ? "open_chamber" : kind;
+  const door = {
+    id: `door_${dungeon.doors.length + 1}`,
+    roomId: room.id,
+    corridorId,
+    floorIndex: room.floorIndex,
+    wall: point.wall,
+    offset: point.offset,
+    direction: point.dir.name,
+    oppositeDirection: point.dir.opposite,
+    inside: point.inside,
+    outside: point.outside,
+    width: kind === "open_chamber" ? 2 : 1,
+    doorType,
+    connectionKind: kind,
+    revealed: kind !== "secret",
+    open: kind === "open_chamber",
+    locked: false,
+    lockType: null,
+    keyId: null,
+    stuck: false,
+  };
+  room.doors.push(door);
+  if (kind === "open_chamber") room.tags = [...new Set([...room.tags, "open_chamber"])];
+  dungeon.doors.push(door);
+}
+
+function addLoops(dungeon, rooms, rng) {
+  const loopCount = Math.max(1, Math.floor(rooms.length / 6));
+  for (let i = 0; i < loopCount; i += 1) {
+    const a = choose(rng, rooms);
+    const b = choose(rng, rooms);
+    if (a && b && a !== b) connectRooms(dungeon, a, b, rng);
+  }
+}
+
+function addDeadEnds(dungeon, floorIndex, rng, count) {
+  const floor = dungeon.floors[floorIndex];
+  const corridorCells = floor.wallGrid.flat().filter((cell) => cell.walkable && cell.spaceType === "corridor");
+  for (let i = 0; i < count; i += 1) {
+    const start = choose(rng, corridorCells);
+    if (!start) continue;
+    const dir = choose(rng, DIRS);
+    const length = choose(rng, [4, 6, 8]);
+    const corridorId = `dead_end_${dungeon.corridors.length + 1}`;
+    const cells = [];
+    let x = start.wallX;
+    let y = start.wallY;
+    for (let step = 0; step < length; step += 1) {
+      x += dir.dx;
+      y += dir.dy;
+      if (!inBounds(dungeon, x + 1, y + 1)) break;
+      carveCorridorBlock(floor, x, y, corridorId, cells);
+    }
+    dungeon.corridors.push({ id: corridorId, floorIndex, cells, width: 2, kind: "dead_end" });
+  }
+}
+
+function addFloorConnections(dungeon, rng) {
+  if (dungeon.floorCount < 2) return;
+  for (let floorIndex = 0; floorIndex < dungeon.floorCount - 1; floorIndex += 1) {
+    addFloorConnection(dungeon, floorIndex, floorIndex + 1, rng, "stairs");
+  }
+}
+
+function addFloorConnection(dungeon, fromFloorIndex, toFloorIndex, rng, kind) {
+  const fromCell = chooseConnectionCell(dungeon, fromFloorIndex, rng);
+  const toCell = chooseConnectionCell(dungeon, toFloorIndex, rng);
+  if (!fromCell || !toCell) return;
+
+  const id = `floor_link_${dungeon.floorConnections.length + 1}`;
+  const connection = {
+    id,
+    kind,
+    connectionType: "vertical",
+    bidirectional: true,
+    skipFloors: Math.max(0, toFloorIndex - fromFloorIndex - 1),
+    assetKey: "stairsThick2x2Transparent",
+    from: {
+      floorIndex: fromFloorIndex,
+      wallX: fromCell.wallX,
+      wallY: fromCell.wallY,
+      marker: "stairs_down",
+      targetFloorIndex: toFloorIndex,
+    },
+    to: {
+      floorIndex: toFloorIndex,
+      wallX: toCell.wallX,
+      wallY: toCell.wallY,
+      marker: "stairs_up",
+      targetFloorIndex: fromFloorIndex,
+    },
+    revealed: false,
+    notes: "Both endpoint cells store matching verticalConnection data.",
+  };
+
+  markConnectionCell(fromCell, connection, "from");
+  markConnectionCell(toCell, connection, "to");
+  dungeon.floorConnections.push(connection);
+  dungeon.floors[fromFloorIndex].connectionsDown.push(id);
+  dungeon.floors[toFloorIndex].connectionsUp.push(id);
+}
+
+function chooseConnectionCell(dungeon, floorIndex, rng) {
+  const rooms = dungeon.rooms.filter((room) => room.floorIndex === floorIndex && !room.tags.includes("boss"));
+  const room = choose(rng, rooms.length ? rooms : dungeon.rooms.filter((item) => item.floorIndex === floorIndex));
+  if (!room) return null;
+  const x = randInt(rng, room.x, room.x + room.width - 1);
+  const y = randInt(rng, room.y, room.y + room.height - 1);
+  return getCell(dungeon, floorIndex, x, y);
+}
+
+function markConnectionCell(cell, connection, endpoint) {
+  const point = connection[endpoint];
+  const target = endpoint === "from" ? connection.to : connection.from;
+  cell.verticalConnection = {
+    connectionId: connection.id,
+    endpoint,
+    kind: connection.kind,
+    marker: point.marker,
+    targetFloorIndex: target.floorIndex,
+    targetWallX: target.wallX,
+    targetWallY: target.wallY,
+  };
+  cell.eventLink = "floor_connection";
+  cell.labels = [...new Set([...cell.labels, point.marker])];
+}
+
+function assignBossRoom(dungeon, floorIndex, rooms) {
+  const start = rooms[0];
+  const startCenter = center(start);
+  let boss = start;
+  let best = -1;
+  for (const room of rooms) {
+    const c = center(room);
+    const distance = Math.abs(c.x - startCenter.x) + Math.abs(c.y - startCenter.y);
+    if (distance > best) {
+      best = distance;
+      boss = room;
+    }
+  }
+  boss.tags.push("boss");
+  boss.eventLink = "boss_room";
+  for (let y = boss.y; y < boss.y + boss.height; y += 1) {
+    for (let x = boss.x; x < boss.x + boss.width; x += 1) {
+      getCell(dungeon, floorIndex, x, y).eventLink = "boss_room";
+    }
+  }
+}
+
+function finalizeDoorStates(dungeon, floorIndex, rng) {
+  const rooms = dungeon.rooms.filter((room) => room.floorIndex === floorIndex);
+  for (const room of rooms) {
+    const lockRoom = room.doors.some((door) => door.doorType !== "open_chamber") && rng() < LOCKED_ROOM_CHANCE;
+    for (const door of room.doors) {
+      if (door.doorType === "open_chamber") {
+        door.open = true;
+        continue;
+      }
+      door.locked = lockRoom;
+      door.lockType = lockRoom ? "generic_key_or_pick" : null;
+      door.open = !lockRoom && door.doorType !== "secret" && rng() < OPEN_DOOR_CHANCE;
+    }
+  }
+}
+
+function interactWithDoor(dungeon, floorIndex, x, y, direction) {
+  const cell = getCell(dungeon, floorIndex, x, y);
+  const door = cell?.edgeFeatures?.[direction];
+  if (!door || door.doorType === "open_chamber" || (door.doorType === "secret" && !door.revealed)) return false;
+  dungeon.turn += 1;
+  if (door.locked) {
+    dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Locked door at ${x}, ${y}. Needs a key or lockpicking.` });
+    dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+    return false;
+  }
+  door.open = true;
+  door.revealed = true;
+  dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Opened door at ${x}, ${y}.` });
+  dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+  return true;
+}
+
+function searchWall(dungeon, floorIndex, x, y, direction, options = {}) {
+  const cell = getCell(dungeon, floorIndex, x, y);
+  const door = cell?.edgeFeatures?.[direction];
+  dungeon.turn += 1;
+  if (!door || door.doorType !== "secret" || door.revealed) {
+    dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Searched wall at ${x}, ${y}: nothing found.` });
+    dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+    return false;
+  }
+  const roll = options.elf ? 6 : randInt(makeRng(`${dungeon.seed}:${dungeon.turn}:${x}:${y}:${direction}`), 1, 6);
+  if (roll === 6) {
+    door.revealed = true;
+    door.open = false;
+    dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Secret door revealed at ${x}, ${y}.` });
+    dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+    return true;
+  }
+  dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Searched wall at ${x}, ${y}: rolled ${roll}, no secret door found.` });
+  dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+  return false;
+}
+
+function deriveEdges(dungeon, floorIndex) {
+  const floor = dungeon.floors[floorIndex];
+  for (let y = 0; y < dungeon.wallGridHeight; y += 1) {
+    for (let x = 0; x < dungeon.wallGridWidth; x += 1) {
+      const cell = floor.wallGrid[y][x];
+      if (!cell.walkable) continue;
+      for (const dir of DIRS) {
+        const n = floor.wallGrid[y + dir.dy]?.[x + dir.dx];
+        cell.edges[dir.name] = edgeTypeForAdjacency(cell, n);
+        cell.edgeFeatures ??= { north: null, east: null, south: null, west: null };
+        cell.edgeFeatures[dir.name] = null;
+      }
+    }
+  }
+  applyRoomConnectionEdges(dungeon, floorIndex);
+}
+
+function edgeTypeForAdjacency(cell, neighbor) {
+  if (!neighbor?.walkable) return "wall";
+  if (
+    (cell.spaceType === "room" && neighbor.spaceType === "corridor") ||
+    (cell.spaceType === "corridor" && neighbor.spaceType === "room")
+  ) {
+    return "wall";
+  }
+  return "open";
+}
+
+function applyRoomConnectionEdges(dungeon, floorIndex) {
+  for (const door of dungeon.doors.filter((item) => item.floorIndex === floorIndex)) {
+    const inside = getCell(dungeon, floorIndex, door.inside.x, door.inside.y);
+    const outside = getCell(dungeon, floorIndex, door.outside.x, door.outside.y);
+    if (!inside || !outside || !inside.walkable || !outside.walkable) continue;
+    const edgeType = door.doorType === "open_chamber" ? "open_chamber" : door.doorType === "secret" ? "secret_door" : "door";
+    inside.edges[door.direction] = edgeType;
+    outside.edges[door.oppositeDirection] = edgeType;
+    inside.edgeFeatures[door.direction] = door;
+    outside.edgeFeatures[door.oppositeDirection] = door;
+    inside.labels = [...new Set([...inside.labels, door.doorType])];
+    outside.labels = [...new Set([...outside.labels, door.doorType])];
+  }
+}
+
+function revealAroundRooms(dungeon, floorIndex, rooms) {
+  for (const room of rooms) {
+    for (let y = room.y - 1; y <= room.y + room.height; y += 1) {
+      for (let x = room.x - 1; x <= room.x + room.width; x += 1) {
+        const cell = getCell(dungeon, floorIndex, x, y);
+        if (cell) cell.revealed = true;
+      }
+    }
+  }
+}
+
+function movePlayer(dungeon, direction) {
+  const dir = DIRS.find((item) => item.name === direction);
+  if (!dir) return false;
+  const { floorIndex, wallX, wallY } = dungeon.player;
+  const current = getCell(dungeon, floorIndex, wallX, wallY);
+  const nextX = wallX + dir.dx;
+  const nextY = wallY + dir.dy;
+  const next = getCell(dungeon, floorIndex, nextX, nextY);
+  if (!current || !next || !next.walkable) return false;
+  if (!canTraverseEdge(current, dir.name)) return false;
+  dungeon.player.wallX = nextX;
+  dungeon.player.wallY = nextY;
+  dungeon.player.facing = direction;
+  dungeon.turn += 1;
+  markVisited(dungeon, floorIndex, nextX, nextY);
+  return true;
+}
+
+function canTraverseEdge(cell, direction) {
+  const edge = cell.edges?.[direction];
+  if (edge === "open" || edge === "open_chamber") return true;
+  if (edge === "door") return Boolean(cell.edgeFeatures?.[direction]?.open);
+  if (edge === "secret_door") return Boolean(cell.edgeFeatures?.[direction]?.revealed && cell.edgeFeatures?.[direction]?.open);
+  return false;
+}
+
+function markVisited(dungeon, floorIndex, x, y) {
+  const cell = getCell(dungeon, floorIndex, x, y);
+  if (!cell) return;
+  cell.visited = true;
+  cell.revealed = true;
+  for (const dir of DIRS) {
+    const adjacent = getCell(dungeon, floorIndex, x + dir.dx, y + dir.dy);
+    if (adjacent) adjacent.revealed = true;
+  }
+  if (!cell.rolledEvent && cell.eventLink) {
+    cell.rolledEvent = rollSimpleEvent(dungeon, cell);
+    dungeon.eventLog.unshift({ turn: dungeon.turn, text: `${cell.rolledEvent.title} at ${x}, ${y}` });
+    dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+  }
+}
+
+function rollSimpleEvent(dungeon, cell) {
+  const roll = ((cell.wallX * 31 + cell.wallY * 17 + dungeon.turn * 13) % 100) + 1;
+  if (cell.eventLink === "boss_room") return { rolled: true, roll, id: "boss_room", title: "Boss Room", resolved: false };
+  if (roll <= 25) return { rolled: true, roll, id: "quiet", title: "Quiet Space", resolved: true };
+  if (roll <= 45) return { rolled: true, roll, id: "dressing", title: "Dungeon Dressing", resolved: false };
+  if (roll <= 70) return { rolled: true, roll, id: "encounter", title: "Encounter", resolved: false };
+  if (roll <= 88) return { rolled: true, roll, id: "hazard", title: "Hazard", resolved: false };
+  return { rolled: true, roll, id: "treasure", title: "Treasure Sign", resolved: false };
+}
+
+
+/* ---- dungeon-renderer.js ---- */
+
+const WALL_COLOR = "#1f1d19";
+const ROOM_COLOR = "rgba(116, 93, 64, 0.44)";
+const CORRIDOR_COLOR = "rgba(79, 104, 98, 0.44)";
+const VISITED_COLOR = "rgba(227, 210, 162, 0.34)";
+const EVENT_COLOR = "#b88a3b";
+const BOSS_COLOR = "#8d4e3d";
+const TORCH_FULL_RADIUS = 4;
+const TORCH_DIM_RADIUS = 8;
+const DIM_LIGHT_OVERLAY = "rgba(2, 2, 3, 0.42)";
+const DARKNESS_OVERLAY = "rgba(0, 0, 0, 0.92)";
+const MAX_FLOOR_CACHE_ITEMS = 4;
+const MAX_STATIC_MAP_CACHE_ITEMS = 4;
+const RENDER_CELL_SIZE = 18;
+const WALL_ASSETS = {
+  straight1x1: "../Tiles/Dungeon_Wall_Straight_1x1.png",
+  straight2x2: "../Tiles/Dungeon_Wall_Straight_2x2.png",
+  straight3x2: "../Tiles/Dungeon_Wall_Straight_3x2.png",
+  straight4x2: "../Tiles/Dungeon_Wall_Straight_4x2.png",
+  straightVariant1x2A: "../Tiles/Dungeon_Straight_1x2_A.png",
+  straightVariant1x2B: "../Tiles/Dungeon_Straight_1x2_B.png",
+  straightVariant2x2A: "../Tiles/Dungeon_Straight_2x2_A.png",
+  straightVariant2x2B: "../Tiles/Dungeon_Straight_2x2_B.png",
+  straightVariant3x2A: "../Tiles/Dungeon_Straight_3x2_A.png",
+  straightVariant3x2B: "../Tiles/Dungeon_Straight_3x2_B.png",
+  straightVariant4x2A: "../Tiles/Dungeon_Straight_4x2_A.png",
+  straightVariant4x2B: "../Tiles/Dungeon_Straight_4x2_B.png",
+  offsetTransitionCurved2x3: "../Tiles/Dungeon_Straight_2x3_A.png",
+  offsetTransitionSquared2x3: "../Tiles/Dungeon_Straight_2x3_B.png",
+  offsetTransitionCurved3x3: "../Tiles/Dungeon_Straight_3x3_A.png",
+  offsetTransitionCurved4x4: "../Tiles/Dungeon_Straight_4x4_A.png",
+  cornerOutTrue2x2: "../Tiles/Dungeon_Corner_Out_2x2_A.png",
+  cornerOutDiagonal2x2: "../Tiles/Dungeon_Corner_Out_2x2_B.png",
+  cornerOutRounded2x2: "../Tiles/Dungeon_Corner_Out_2x2_C.png",
+  cornerInTrue2x2: "../Tiles/Dungeon_Corner_In_2x2_A.png",
+  cornerInDiagonal2x2: "../Tiles/Dungeon_Corner_In_2x2_B.png",
+  cornerInRounded2x2: "../Tiles/Dungeon_Corner_In_2x2_C.png",
+  wallCornerTrue2x2: "../Tiles/Dungeon_Wall_Corner_2x2.png",
+  wallCornerDiagonal2x2: "../Tiles/Dungeon_Wall_Corner_2x2_B.png",
+  wallCornerRounded2x2: "../Tiles/Dungeon_Wall_Corner_2x2_C.png",
+  deadEndSquared3x2: "../Tiles/Dungeon_Dead_End_3x2_A.png",
+  deadEndInvertedU3x2: "../Tiles/Dungeon_Dead_End_3x2_B.png",
+  deadEndOutSquared3x2: "../Tiles/Dungeon_Dead_End_Out_3x2_A.png",
+  deadEndOutInvertedU3x2: "../Tiles/Dungeon_Dead_End_Out_3x2_B.png",
+  wallEndLeft: "../Tiles/Dungeon_End_Left.png",
+  wallEndRight: "../Tiles/Dungeon_End_Right.png",
+  wallEndLargeRight1x2: "../Tiles/Dungeon_Wall_End_Piece_1x2_A.png",
+  wallEndLargeLeft1x2: "../Tiles/Dungeon_Wall_End_Piece_1x2_B.png",
+  wallFix1: "../Tiles/Dungeon_Wall_Fix_1.png",
+  wallFix2: "../Tiles/Dungeon_Wall_Fix_2.png",
+  wallFix3: "../Tiles/Dungeon_Wall_Fix_3.png",
+  wallFix4: "../Tiles/Dungeon_Wall_Fix_4.png",
+  wallFix5: "../Tiles/Dungeon_Wall_Fix_5.png",
+  wallFix6: "../Tiles/Dungeon_Wall_Fix_6.png",
+  pillar1x1A: "../Tiles/Dungeon_Pillar_1x1_A.png",
+  pillar1x1B: "../Tiles/Dungeon_Pillar_1x1_B.png",
+  pillar2x2A: "../Tiles/Dungeon_Pillar_2x2_A.png",
+  pillar2x2B: "../Tiles/Dungeon_Pillar_2x2_B.png",
+  pillar2x2C: "../Tiles/Dungeon_Pillar_2x2_C.png",
+  pillar2x2D: "../Tiles/Dungeon_Pillar_2x2_D.png",
+  blackPatchPit: "../Tiles/Black_Patch.png",
+  stairsThick2x2: "../Tiles/Dungeon_Stairs_Thick_2x2.png",
+  stairsThick2x2Transparent: "../Tiles/Dungeon_Stairs_Thick_2x2_Transparent.png",
+  stairsThick3x2: "../Tiles/Dungeon_Stairs_Thick_3x2.png",
+  stairsThick3x2Transparent: "../Tiles/Dungeon_Stairs_Thick_3x2_Transparent.png",
+  stairsThin2x1: "../Tiles/Dungeon_Stairs_Thin_2x1.png",
+  stairsThin2x1Transparent: "../Tiles/Dungeon_Stairs_Thin_2x1_Transparent.png",
+  stairsThin3x1: "../Tiles/Dungeon_Stairs_Thin_3x1.png",
+  stairsThin3x1Transparent: "../Tiles/Dungeon_Stairs_Thin_3x1_Transparent.png",
+  crossroadPlus2x2: "../Tiles/Dungeon_Wall_Crossroad_2x2_A.png",
+  crossroadT2x2: "../Tiles/Dungeon_Wall_Crossroad_2x2_B.png",
+  woodenDoorStoneA1x2: "../Tiles/Dungeon_Wooden_Door_1x2_A.png",
+  woodenDoorStoneB1x2: "../Tiles/Dungeon_Wooden_Door_1x2_B.png",
+  woodenDoorNoConnector1x2: "../Tiles/Dungeon_Wooden_Door_1x2_C.png",
+  woodenDoorWoodConnector1x2: "../Tiles/Dungeon_Wooden_Door_1x2_D.png",
+  woodenDoubleDoorStoneA2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_A.png",
+  woodenDoubleDoorStoneB2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_B.png",
+  woodenDoubleDoorNoConnector2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_C.png",
+  woodenDoubleDoorWoodConnector2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_D.png",
+};
+
+class DungeonRenderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.imageCache = new Map();
+    this.floorCache = new Map();
+    this.staticMapCache = new Map();
+    this.fogCanvas = document.createElement("canvas");
+    this.fogCtx = this.fogCanvas.getContext("2d");
+  }
+
+  async render(dungeon, zoom, options = {}) {
+    this.revealAll = Boolean(options.revealAll);
+    this.playerLight = {
+      floorIndex: dungeon.player.floorIndex,
+      wallX: dungeon.player.wallX,
+      wallY: dungeon.player.wallY,
+    };
+    this.currentFloor = dungeon.currentFloor;
+    this.lightMap = this.buildLightMap(dungeon);
+    const cellSize = RENDER_CELL_SIZE;
+    const displayScale = Math.max(0.25, Number(zoom) / RENDER_CELL_SIZE);
+    const width = dungeon.wallGridWidth * cellSize;
+    const height = dungeon.wallGridHeight * cellSize;
+    const ratio = window.devicePixelRatio || 1;
+    const pixelWidth = Math.ceil(width * ratio);
+    const pixelHeight = Math.ceil(height * ratio);
+    if (this.canvas.width !== pixelWidth) this.canvas.width = pixelWidth;
+    if (this.canvas.height !== pixelHeight) this.canvas.height = pixelHeight;
+    this.canvas.style.width = `${width}px`;
+    this.canvas.style.height = `${height}px`;
+    this.canvas.style.transform = `scale(${displayScale})`;
+    const stage = this.canvas.parentElement;
+    if (stage) {
+      stage.style.width = `${width * displayScale}px`;
+      stage.style.height = `${height * displayScale}px`;
+    }
+    const ctx = this.ctx;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.clearRect(0, 0, width, height);
+    const staticMap = await this.getStaticMap(dungeon, cellSize, options);
+    ctx.drawImage(staticMap, 0, 0);
+    this.drawVisited(dungeon, cellSize);
+    this.drawFogOfWar(dungeon, cellSize);
+    this.drawPlayer(dungeon, cellSize);
+    if (options.debugLabels) this.drawDebugLabels(dungeon, cellSize);
+  }
+
+  async getStaticMap(dungeon, cellSize, options) {
+    const cacheKey = staticMapCacheKey(dungeon, cellSize, options);
+    const cached = this.staticMapCache.get(cacheKey);
+    if (cached) return cached;
+
+    const previousCtx = this.ctx;
+    const previousStaticRender = this.staticRender;
+    const canvas = document.createElement("canvas");
+    canvas.width = dungeon.wallGridWidth * cellSize;
+    canvas.height = dungeon.wallGridHeight * cellSize;
+    this.ctx = canvas.getContext("2d");
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = "high";
+    this.staticRender = true;
+
+    await this.drawFloor(dungeon, cellSize);
+    this.drawWalkable(dungeon, cellSize);
+    if (options.artWalls) {
+      await this.drawWallArt(dungeon, cellSize);
+      this.drawWallDebugEdges(dungeon, cellSize);
+    } else {
+      this.drawWalls(dungeon, cellSize);
+    }
+    await this.drawDoors(dungeon, cellSize);
+    this.drawEvents(dungeon, cellSize);
+    this.drawFloorConnections(dungeon, cellSize);
+
+    this.ctx = previousCtx;
+    this.staticRender = previousStaticRender;
+    this.staticMapCache.set(cacheKey, canvas);
+    pruneCanvasCache(this.staticMapCache, MAX_STATIC_MAP_CACHE_ITEMS);
+    return canvas;
+  }
+
+  async drawFloor(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    const cacheKey = floorCacheKey(dungeon, cellSize);
+    const cached = this.floorCache.get(cacheKey);
+    if (cached) {
+      ctx.drawImage(cached, 0, 0);
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = dungeon.wallGridWidth * cellSize;
+    canvas.height = dungeon.wallGridHeight * cellSize;
+    const floorCtx = canvas.getContext("2d");
+    const tilePixelSize = dungeon.floorTileSize;
+    const scaledFloorSize = (tilePixelSize / dungeon.wallCellSize) * cellSize;
+    for (const row of floor.floorGrid) {
+      for (const floorCell of row) {
+        const src = FLOOR_TILES[floorCell.tile] ?? FLOOR_TILES.stone_standard_square;
+        const img = await this.loadImage(src);
+        const x = floorCell.floorX * scaledFloorSize;
+        const y = floorCell.floorY * scaledFloorSize;
+        if (img) {
+          floorCtx.drawImage(img, x, y, scaledFloorSize, scaledFloorSize);
+        } else {
+          drawFallbackFloorTile(floorCtx, x, y, scaledFloorSize, floorCell.tile);
+        }
+      }
+    }
+    floorCtx.fillStyle = "rgba(12, 10, 8, 0.24)";
+    floorCtx.fillRect(0, 0, dungeon.wallGridWidth * cellSize, dungeon.wallGridHeight * cellSize);
+    this.floorCache.set(cacheKey, canvas);
+    pruneCanvasCache(this.floorCache, MAX_FLOOR_CACHE_ITEMS);
+    ctx.drawImage(canvas, 0, 0);
+  }
+
+  loadImage(src) {
+    if (this.imageCache.has(src)) return this.imageCache.get(src);
+    const promise = new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+    this.imageCache.set(src, promise);
+    return promise;
+  }
+
+  drawWalkable(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell)) continue;
+        ctx.fillStyle = cell.spaceType === "room" ? ROOM_COLOR : CORRIDOR_COLOR;
+        ctx.fillRect(cell.wallX * cellSize, cell.wallY * cellSize, cellSize, cellSize);
+        if (!this.staticRender && cell.visited) {
+          ctx.fillStyle = VISITED_COLOR;
+          ctx.fillRect(cell.wallX * cellSize, cell.wallY * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+  }
+
+  drawVisited(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    ctx.save();
+    ctx.fillStyle = VISITED_COLOR;
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !cell.visited) continue;
+        ctx.fillRect(cell.wallX * cellSize, cell.wallY * cellSize, cellSize, cellSize);
+      }
+    }
+    ctx.restore();
+  }
+
+  drawWalls(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    ctx.strokeStyle = WALL_COLOR;
+    ctx.lineWidth = Math.max(2, cellSize * 0.22);
+    ctx.lineCap = "round";
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell)) continue;
+        const x = cell.wallX * cellSize;
+        const y = cell.wallY * cellSize;
+        if (edgeLooksLikeWall(cell, "north")) line(ctx, x, y, x + cellSize, y);
+        if (edgeLooksLikeWall(cell, "east")) line(ctx, x + cellSize, y, x + cellSize, y + cellSize);
+        if (edgeLooksLikeWall(cell, "south")) line(ctx, x, y + cellSize, x + cellSize, y + cellSize);
+        if (edgeLooksLikeWall(cell, "west")) line(ctx, x, y, x, y + cellSize);
+      }
+    }
+  }
+
+  async drawWallArt(dungeon, cellSize) {
+    const wallImages = {
+      1: await this.loadImage(WALL_ASSETS.straight1x1),
+      2: await this.loadImage(WALL_ASSETS.straight2x2),
+      3: await this.loadImage(WALL_ASSETS.straight3x2),
+      4: await this.loadImage(WALL_ASSETS.straight4x2),
+    };
+    const corner = await this.loadImage(WALL_ASSETS.cornerOutTrue2x2);
+    const floor = dungeon.floors[dungeon.currentFloor];
+    if (!wallImages[1] || !wallImages[2] || !wallImages[3] || !wallImages[4] || !corner) {
+      this.drawWalls(dungeon, cellSize);
+      return;
+    }
+
+    this.drawHorizontalWallRuns(floor, "north", wallImages, cellSize);
+    this.drawHorizontalWallRuns(floor, "south", wallImages, cellSize);
+    this.drawVerticalWallRuns(floor, "west", wallImages, cellSize);
+    this.drawVerticalWallRuns(floor, "east", wallImages, cellSize);
+    this.drawCornerArt(floor, corner, cellSize);
+  }
+
+  drawHorizontalWallRuns(floor, edge, wallImages, cellSize) {
+    for (const row of floor.wallGrid) {
+      let x = 0;
+      while (x < row.length) {
+        const cell = row[x];
+        if (!isDrawableWallEdge(cell, edge, (target) => this.isVisible(target))) {
+          x += 1;
+          continue;
+        }
+        const startX = x;
+        const y = cell.wallY;
+        while (x < row.length && isDrawableWallEdge(row[x], edge, (target) => this.isVisible(target))) x += 1;
+        this.drawWallRun(startX, y, x - startX, edge, wallImages, cellSize);
+      }
+    }
+  }
+
+  drawVerticalWallRuns(floor, edge, wallImages, cellSize) {
+    const height = floor.wallGrid.length;
+    const width = floor.wallGrid[0]?.length ?? 0;
+    for (let x = 0; x < width; x += 1) {
+      let y = 0;
+      while (y < height) {
+        const cell = floor.wallGrid[y][x];
+        if (!isDrawableWallEdge(cell, edge, (target) => this.isVisible(target))) {
+          y += 1;
+          continue;
+        }
+        const startY = y;
+        while (y < height && isDrawableWallEdge(floor.wallGrid[y][x], edge, (target) => this.isVisible(target))) y += 1;
+        this.drawVerticalWallRun(x, startY, y - startY, edge, wallImages, cellSize);
+      }
+    }
+  }
+
+  drawWallRun(gridX, gridY, length, edge, wallImages, cellSize) {
+    let offset = 0;
+    while (offset < length) {
+      const remaining = length - offset;
+      const chunk = remaining >= 4 ? 4 : remaining >= 3 ? 3 : remaining >= 2 ? 2 : 1;
+      const img = wallImages[chunk];
+      const x = (gridX + (edge === "north" || edge === "south" ? offset : 0)) * cellSize;
+      const y = (gridY + (edge === "west" || edge === "east" ? offset : 0)) * cellSize;
+      const width = chunk * cellSize;
+      const height = 2 * cellSize;
+
+      if (edge === "north") drawAsset(this.ctx, img, x, y - cellSize, width, height, 0);
+      if (edge === "south") drawAsset(this.ctx, img, x, y, width, height, Math.PI);
+      if (edge === "west") drawAsset(this.ctx, img, x - cellSize, y, width, height, -Math.PI / 2);
+      if (edge === "east") drawAsset(this.ctx, img, x, y, width, height, Math.PI / 2);
+
+      offset += chunk;
+    }
+  }
+
+  drawVerticalWallRun(gridX, gridY, length, edge, wallImages, cellSize) {
+    let offset = 0;
+    while (offset < length) {
+      const remaining = length - offset;
+      const chunk = remaining >= 4 ? 4 : remaining >= 3 ? 3 : remaining >= 2 ? 2 : 1;
+      const img = wallImages[chunk];
+      const x = gridX * cellSize;
+      const y = (gridY + offset) * cellSize;
+      const width = 2 * cellSize;
+      const height = chunk * cellSize;
+
+      if (edge === "west") drawRotatedAsset(this.ctx, img, x - cellSize, y, width, height, -Math.PI / 2);
+      if (edge === "east") drawRotatedAsset(this.ctx, img, x, y, width, height, Math.PI / 2);
+
+      offset += chunk;
+    }
+  }
+
+  drawCornerArt(floor, corner, cellSize) {
+    const usedCorners = new Set();
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell)) continue;
+        const x = cell.wallX * cellSize;
+        const y = cell.wallY * cellSize;
+        const cornerKey = `${cell.wallX},${cell.wallY}`;
+        if (!usedCorners.has(cornerKey)) {
+          const cornerType = getCornerType(cell);
+          if (cornerType) {
+            usedCorners.add(cornerKey);
+            const rotation = cornerRotation(cornerType);
+            const offset = cornerOffset(cornerType, cellSize);
+            drawAsset(this.ctx, corner, x + offset.x, y + offset.y, cellSize * 2, cellSize * 2, rotation);
+          }
+        }
+      }
+    }
+  }
+
+  drawWallDebugEdges(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+    ctx.lineWidth = 1;
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell)) continue;
+        const x = cell.wallX * cellSize;
+        const y = cell.wallY * cellSize;
+        if (edgeLooksLikeWall(cell, "north")) line(ctx, x, y, x + cellSize, y);
+        if (edgeLooksLikeWall(cell, "east")) line(ctx, x + cellSize, y, x + cellSize, y + cellSize);
+        if (edgeLooksLikeWall(cell, "south")) line(ctx, x, y + cellSize, x + cellSize, y + cellSize);
+        if (edgeLooksLikeWall(cell, "west")) line(ctx, x, y, x, y + cellSize);
+      }
+    }
+    ctx.restore();
+  }
+
+  async drawDoors(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const doors = (dungeon.doors ?? dungeon.rooms.flatMap((room) => room.doors ?? []))
+      .filter((door) => door.floorIndex === undefined || door.floorIndex === dungeon.currentFloor);
+    const doorImages = {
+      single: await this.loadImage(WALL_ASSETS.woodenDoorStoneA1x2),
+      double: await this.loadImage(WALL_ASSETS.woodenDoubleDoorStoneA2x2),
+      open: await this.loadImage(WALL_ASSETS.woodenDoorNoConnector1x2),
+    };
+    for (const door of doors) {
+      if (door.doorType === "secret" && !door.revealed) continue;
+      const pos = door.inside ?? doorPosition(dungeon.rooms.find((room) => room.id === door.roomId), door);
+      if (!pos) continue;
+      const doorCell = getCell(dungeon, dungeon.currentFloor, pos.x, pos.y);
+      if (!this.isVisible(doorCell)) continue;
+      const x = pos.x * cellSize;
+      const y = pos.y * cellSize;
+      if (door.doorType === "open_chamber") {
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        if (doorImages.open) {
+          drawDoorAsset(ctx, doorImages.open, x, y, cellSize, { ...door, width: 1 });
+        } else {
+          drawFallbackDoor(ctx, x, y, cellSize, { ...door, width: 1 });
+        }
+        ctx.restore();
+      } else {
+        const img = door.width > 1 ? doorImages.double : doorImages.single;
+        ctx.save();
+        if (door.open) ctx.globalAlpha = 0.52;
+        if (img) {
+          drawDoorAsset(ctx, img, x, y, cellSize, door);
+        } else {
+          drawFallbackDoor(ctx, x, y, cellSize, door);
+        }
+        ctx.restore();
+        if (door.locked && door.revealed) drawLockMarker(ctx, x, y, cellSize, door.wall);
+      }
+    }
+  }
+
+  drawEvents(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell) || !cell.rolledEvent || cell.rolledEvent.resolved) continue;
+        ctx.fillStyle = cell.rolledEvent.id === "boss_room" ? BOSS_COLOR : EVENT_COLOR;
+        ctx.beginPath();
+        ctx.arc(cell.wallX * cellSize + cellSize / 2, cell.wallY * cellSize + cellSize / 2, Math.max(3, cellSize * 0.28), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  drawFloorConnections(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    ctx.save();
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || !this.isVisible(cell) || !cell.verticalConnection) continue;
+        const x = cell.wallX * cellSize + cellSize / 2;
+        const y = cell.wallY * cellSize + cellSize / 2;
+        const radius = Math.max(4, cellSize * 0.36);
+        ctx.fillStyle = cell.verticalConnection.marker === "stairs_down" ? "#314f68" : "#715c9a";
+        ctx.strokeStyle = "#f7f0d2";
+        ctx.lineWidth = Math.max(1, cellSize * 0.08);
+        ctx.beginPath();
+        if (cell.verticalConnection.marker === "stairs_down") {
+          ctx.moveTo(x - radius, y - radius * 0.55);
+          ctx.lineTo(x + radius, y - radius * 0.55);
+          ctx.lineTo(x, y + radius);
+        } else {
+          ctx.moveTo(x, y - radius);
+          ctx.lineTo(x + radius, y + radius * 0.55);
+          ctx.lineTo(x - radius, y + radius * 0.55);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  drawFogOfWar(dungeon, cellSize) {
+    if (this.revealAll) return;
+    const width = dungeon.wallGridWidth * cellSize;
+    const height = dungeon.wallGridHeight * cellSize;
+    const overlay = this.fogCanvas;
+    const fog = this.fogCtx;
+    if (overlay.width !== width || overlay.height !== height) {
+      overlay.width = width;
+      overlay.height = height;
+    }
+    fog.setTransform(1, 0, 0, 1, 0, 0);
+    fog.clearRect(0, 0, width, height);
+    fog.globalCompositeOperation = "source-over";
+    fog.fillStyle = DARKNESS_OVERLAY;
+    fog.fillRect(0, 0, width, height);
+    fog.globalCompositeOperation = "destination-out";
+    for (const [key, light] of this.lightMap) {
+      const [x, y] = key.split(",").map(Number);
+      fog.fillStyle = light === "full" ? "rgba(0, 0, 0, 1)" : "rgba(0, 0, 0, 0.54)";
+      fog.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+    }
+    fog.globalCompositeOperation = "source-over";
+    this.ctx.drawImage(overlay, 0, 0);
+  }
+
+  drawPlayer(dungeon, cellSize) {
+    const ctx = this.ctx;
+    if (dungeon.player.floorIndex !== dungeon.currentFloor) return;
+    const x = dungeon.player.wallX * cellSize + cellSize / 2;
+    const y = dungeon.player.wallY * cellSize + cellSize / 2;
+    ctx.fillStyle = "#f7f0d2";
+    ctx.strokeStyle = "#24211c";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(5, cellSize * 0.48), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  drawDebugLabels(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    const fontSize = Math.max(6, Math.floor(cellSize * 0.42));
+    ctx.save();
+    ctx.font = `${fontSize}px Consolas, monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!this.isVisible(cell)) continue;
+        const x = cell.wallX * cellSize;
+        const y = cell.wallY * cellSize;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+        ctx.fillStyle = labelColor(cell);
+        const label = makeCellLabel(cell);
+        if (cellSize >= 16) {
+          const parts = label.split(" ");
+          ctx.fillText(parts[0], x + cellSize / 2, y + cellSize * 0.36);
+          ctx.fillText(parts[1] ?? "", x + cellSize / 2, y + cellSize * 0.7);
+        } else {
+          ctx.fillText(label.charAt(0), x + cellSize / 2, y + cellSize / 2);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  isVisible(cell) {
+    return Boolean(cell && (this.staticRender || this.revealAll || this.lightLevel(cell) !== "dark"));
+  }
+
+  lightLevel(cell) {
+    if (this.revealAll) return "full";
+    if (!cell || !this.lightMap) return "dark";
+    return this.lightMap.get(lightKey(cell.wallX, cell.wallY)) ?? "dark";
+  }
+
+  buildLightMap(dungeon) {
+    const lightMap = new Map();
+    if (this.revealAll || dungeon.player.floorIndex !== dungeon.currentFloor) return lightMap;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    const origin = getCell(dungeon, dungeon.currentFloor, dungeon.player.wallX, dungeon.player.wallY);
+    if (!origin) return lightMap;
+    const minX = Math.max(0, origin.wallX - TORCH_DIM_RADIUS);
+    const maxX = Math.min(dungeon.wallGridWidth - 1, origin.wallX + TORCH_DIM_RADIUS);
+    const minY = Math.max(0, origin.wallY - TORCH_DIM_RADIUS);
+    const maxY = Math.min(dungeon.wallGridHeight - 1, origin.wallY + TORCH_DIM_RADIUS);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const cell = floor.wallGrid[y]?.[x];
+        if (!cell) continue;
+        const distance = Math.hypot(x - origin.wallX, y - origin.wallY);
+        if (distance > TORCH_DIM_RADIUS) continue;
+        if (!hasLineOfLight(floor, origin, cell)) continue;
+        lightMap.set(lightKey(x, y), distance <= TORCH_FULL_RADIUS ? "full" : "dim");
+      }
+    }
+    return lightMap;
+  }
+}
+
+function line(ctx, x1, y1, x2, y2) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+function drawFallbackFloorTile(ctx, x, y, size, tileKey = "") {
+  const palette = tileKey.includes("dark")
+    ? ["#2f3232", "#3b3f3f"]
+    : tileKey.includes("sandstone")
+      ? ["#665b45", "#766b52"]
+      : ["#4b4e4a", "#5a5d58"];
+  ctx.fillStyle = palette[0];
+  ctx.fillRect(x, y, size, size);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+  ctx.lineWidth = Math.max(1, size * 0.006);
+  const step = Math.max(18, size / 8);
+  for (let py = y; py <= y + size; py += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, py);
+    ctx.lineTo(x + size, py + Math.sin(py * 0.03) * step * 0.28);
+    ctx.stroke();
+  }
+  for (let px = x; px <= x + size; px += step) {
+    ctx.beginPath();
+    ctx.moveTo(px, y);
+    ctx.lineTo(px + Math.cos(px * 0.03) * step * 0.28, y + size);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.fillRect(x, y, size, size);
+}
+
+function drawAsset(ctx, img, x, y, width, height, rotation) {
+  if (!img) return;
+  ctx.save();
+  ctx.translate(x + width / 2, y + height / 2);
+  ctx.rotate(rotation);
+  ctx.drawImage(img, -width / 2, -height / 2, width, height);
+  ctx.restore();
+}
+
+function drawRotatedAsset(ctx, img, x, y, width, height, rotation) {
+  if (!img) return;
+  ctx.save();
+  ctx.translate(x + width / 2, y + height / 2);
+  ctx.rotate(rotation);
+  ctx.drawImage(img, -height / 2, -width / 2, height, width);
+  ctx.restore();
+}
+
+function isDrawableWallEdge(cell, edge, isVisible) {
+  return Boolean(cell?.walkable && isVisible(cell) && edgeLooksLikeWall(cell, edge));
+}
+
+function edgeLooksLikeWall(cell, edge) {
+  const edgeType = cell?.edges?.[edge];
+  if (edgeType === "wall") return true;
+  if (edgeType !== "secret_door") return false;
+  return !cell.edgeFeatures?.[edge]?.revealed;
+}
+
+function hasLineOfLight(floor, origin, target) {
+  if (origin === target) return true;
+  const cells = lineCells(origin, target)
+    .map((point) => floor.wallGrid[point.y]?.[point.x])
+    .filter(Boolean);
+  let current = cells[0];
+  for (const next of cells.slice(1)) {
+    if (!lightCanPass(floor, current, next)) return false;
+    current = next;
+  }
+  return true;
+}
+
+function lineCells(origin, target) {
+  const cells = [];
+  let x = origin.wallX;
+  let y = origin.wallY;
+  const endX = target.wallX;
+  const endY = target.wallY;
+  const dx = Math.abs(endX - x);
+  const dy = Math.abs(endY - y);
+  const sx = x < endX ? 1 : -1;
+  const sy = y < endY ? 1 : -1;
+  let err = dx - dy;
+
+  while (true) {
+    cells.push({ x, y });
+    if (x === endX && y === endY) break;
+    const e2 = err * 2;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+  return cells;
+}
+
+function lightCanPass(floor, current, next) {
+  if (!current || !next) return false;
+  const dx = next.wallX - current.wallX;
+  const dy = next.wallY - current.wallY;
+  if (Math.abs(dx) + Math.abs(dy) === 1) return cardinalLightPass(current, next);
+  if (Math.abs(dx) === 1 && Math.abs(dy) === 1) {
+    const horizontal = floor.wallGrid[current.wallY]?.[current.wallX + dx];
+    const vertical = floor.wallGrid[current.wallY + dy]?.[current.wallX];
+    return Boolean(
+      (horizontal && cardinalLightPass(current, horizontal) && cardinalLightPass(horizontal, next)) ||
+      (vertical && cardinalLightPass(current, vertical) && cardinalLightPass(vertical, next))
+    );
+  }
+  return false;
+}
+
+function cardinalLightPass(current, next) {
+  const direction = directionBetween(current, next);
+  if (!direction) return false;
+  return edgeAllowsLight(current, direction.name) && edgeAllowsLight(next, direction.opposite);
+}
+
+function directionBetween(current, next) {
+  const dx = next.wallX - current.wallX;
+  const dy = next.wallY - current.wallY;
+  if (dx === 1 && dy === 0) return { name: "east", opposite: "west" };
+  if (dx === -1 && dy === 0) return { name: "west", opposite: "east" };
+  if (dx === 0 && dy === 1) return { name: "south", opposite: "north" };
+  if (dx === 0 && dy === -1) return { name: "north", opposite: "south" };
+  return null;
+}
+
+function edgeAllowsLight(cell, direction) {
+  const edge = cell.edges?.[direction];
+  if (edge === "open" || edge === "open_chamber") return true;
+  if (edge === "door") return Boolean(cell.edgeFeatures?.[direction]?.open);
+  if (edge === "secret_door") return Boolean(cell.edgeFeatures?.[direction]?.revealed && cell.edgeFeatures?.[direction]?.open);
+  return false;
+}
+
+function lightKey(x, y) {
+  return `${x},${y}`;
+}
+
+function floorCacheKey(dungeon, cellSize) {
+  const floor = dungeon.floors[dungeon.currentFloor];
+  const tileIds = floor.floorGrid.flat().map((cell) => cell.tile).join("|");
+  return `${dungeon.dungeonId}:${dungeon.currentFloor}:${cellSize}:${dungeon.wallGridWidth}x${dungeon.wallGridHeight}:${tileIds}`;
+}
+
+function staticMapCacheKey(dungeon, cellSize, options) {
+  const artMode = options.artWalls ? "art" : "line";
+  const doorState = (dungeon.doors ?? [])
+    .filter((door) => door.floorIndex === dungeon.currentFloor)
+    .map((door) => `${door.id}:${door.revealed ? 1 : 0}:${door.open ? 1 : 0}:${door.locked ? 1 : 0}`)
+    .join("|");
+  return `${dungeon.dungeonId}:${dungeon.currentFloor}:${cellSize}:${artMode}:${doorState}`;
+}
+
+function pruneCanvasCache(cache, maxItems) {
+  while (cache.size > maxItems) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+  }
+}
+
+function getCornerType(cell) {
+  const n = edgeLooksLikeWall(cell, "north");
+  const e = edgeLooksLikeWall(cell, "east");
+  const s = edgeLooksLikeWall(cell, "south");
+  const w = edgeLooksLikeWall(cell, "west");
+  if (n && w) return "north-west";
+  if (n && e) return "north-east";
+  if (s && e) return "south-east";
+  if (s && w) return "south-west";
+  return null;
+}
+
+function cornerRotation(type) {
+  // The base corner art's visual turn is opposite the logical corner
+  // reported by the cell edge test, so rotate by 180 degrees.
+  if (type === "north-west") return Math.PI;
+  if (type === "north-east") return -Math.PI / 2;
+  if (type === "south-east") return 0;
+  return Math.PI / 2;
+}
+
+function cornerOffset(type, cellSize) {
+  // Anchor the 2x2 corner art outside the walkable cell so the curve hugs
+  // the outer wall edges instead of sitting one wall width inside the room.
+  if (type === "north-west") return { x: -cellSize, y: -cellSize };
+  if (type === "north-east") return { x: 0, y: -cellSize };
+  if (type === "south-east") return { x: 0, y: 0 };
+  return { x: -cellSize, y: 0 };
+}
+
+function doorPosition(room, door) {
+  if (!room) return null;
+  if (door.wall === "north") return { x: room.x + door.offset, y: room.y };
+  if (door.wall === "south") return { x: room.x + door.offset, y: room.y + room.height - 1 };
+  if (door.wall === "east") return { x: room.x + room.width - 1, y: room.y + door.offset };
+  return { x: room.x, y: room.y + door.offset };
+}
+
+function drawDoorAsset(ctx, img, x, y, cellSize, door) {
+  const widthCells = door.width > 1 ? 2 : 1;
+  const assetWidth = cellSize * widthCells * 1.28;
+  const assetHeight = cellSize * 2.18;
+  const centerX = x + (cellSize * widthCells) / 2;
+  const centerY = y + (cellSize * widthCells) / 2;
+  if (door.wall === "north") {
+    drawAsset(ctx, img, centerX - assetWidth / 2, y - assetHeight / 2, assetWidth, assetHeight, 0);
+  } else if (door.wall === "south") {
+    drawAsset(ctx, img, centerX - assetWidth / 2, y + cellSize - assetHeight / 2, assetWidth, assetHeight, Math.PI);
+  } else if (door.wall === "east") {
+    drawAsset(ctx, img, x + cellSize - assetWidth / 2, centerY - assetHeight / 2, assetWidth, assetHeight, Math.PI / 2);
+  } else {
+    drawAsset(ctx, img, x - assetWidth / 2, centerY - assetHeight / 2, assetWidth, assetHeight, -Math.PI / 2);
+  }
+}
+
+function drawFallbackDoor(ctx, x, y, cellSize, door) {
+  const widthCells = door.width > 1 ? 2 : 1;
+  const long = cellSize * widthCells * 0.72;
+  const thick = Math.max(3, cellSize * 0.16);
+  const centerX = x + (cellSize * widthCells) / 2;
+  const centerY = y + (cellSize * widthCells) / 2;
+  let rect;
+  if (door.wall === "north") {
+    rect = { x: centerX - long / 2, y: y - thick / 2, width: long, height: thick };
+  } else if (door.wall === "south") {
+    rect = { x: centerX - long / 2, y: y + cellSize - thick / 2, width: long, height: thick };
+  } else if (door.wall === "east") {
+    rect = { x: x + cellSize - thick / 2, y: centerY - long / 2, width: thick, height: long };
+  } else {
+    rect = { x: x - thick / 2, y: centerY - long / 2, width: thick, height: long };
+  }
+  ctx.save();
+  ctx.fillStyle = door.open ? "#b58a54" : "#7b4d2a";
+  ctx.strokeStyle = "#2b2018";
+  ctx.lineWidth = Math.max(1, cellSize * 0.05);
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.restore();
+}
+
+function drawLockMarker(ctx, x, y, cellSize, wall) {
+  const marker = Math.max(3, cellSize * 0.22);
+  let px = x + cellSize / 2;
+  let py = y + cellSize / 2;
+  if (wall === "north") py = y;
+  if (wall === "south") py = y + cellSize;
+  if (wall === "west") px = x;
+  if (wall === "east") px = x + cellSize;
+  ctx.save();
+  ctx.fillStyle = "#9b2f2f";
+  ctx.strokeStyle = "#2a1614";
+  ctx.lineWidth = Math.max(1, cellSize * 0.05);
+  ctx.beginPath();
+  ctx.arc(px, py, marker, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function describeCell(dungeon) {
+  const cell = getCell(dungeon, dungeon.player.floorIndex, dungeon.player.wallX, dungeon.player.wallY);
+  if (!cell) return [];
+  return [
+    ["Floor", String(dungeon.player.floorIndex + 1)],
+    ["Position", `${cell.wallX}, ${cell.wallY}`],
+    ["Type", cell.spaceType],
+    ["Room", cell.roomId ?? "-"],
+    ["Corridor", cell.corridorId ?? "-"],
+    ["Edges", edgeSummary(cell)],
+    ["Passage", passageSummary(cell)],
+    ["Event", cell.rolledEvent?.title ?? "Not rolled"],
+    ["Layer Link", describeVerticalConnection(cell)],
+    ["Visited", cell.visited ? "Yes" : "No"],
+  ];
+}
+
+function describeVerticalConnection(cell) {
+  if (!cell.verticalConnection) return "-";
+  const target = cell.verticalConnection.targetFloorIndex + 1;
+  const marker = cell.verticalConnection.marker === "stairs_down" ? "Down" : "Up";
+  return `${marker} to F${target} at ${cell.verticalConnection.targetWallX}, ${cell.verticalConnection.targetWallY}`;
+}
+
+function edgeSummary(cell) {
+  return `N:${cell.edges.north[0]} E:${cell.edges.east[0]} S:${cell.edges.south[0]} W:${cell.edges.west[0]}`;
+}
+
+function passageSummary(cell) {
+  const features = Object.entries(cell.edgeFeatures ?? {}).filter(([, feature]) => feature);
+  if (!features.length) return "-";
+  return features.map(([edge, feature]) => `${edge}:${feature.doorType}`).join(", ");
+}
+
+function makeCellLabel(cell) {
+  const type = cell.walkable ? (cell.spaceType === "room" ? "R" : "C") : "V";
+  const link = cell.verticalConnection?.marker === "stairs_down" ? "D" : cell.verticalConnection ? "U" : "";
+  const event = cell.rolledEvent && !cell.rolledEvent.resolved ? "!" : "";
+  const boss = cell.eventLink === "boss_room" ? "B" : "";
+  return `${cell.wallX},${cell.wallY} ${type}${boss}${link}${event}`;
+}
+
+function labelColor(cell) {
+  if (cell.eventLink === "boss_room") return "#8d4e3d";
+  if (cell.spaceType === "room") return "#4f3f2f";
+  if (cell.spaceType === "corridor") return "#324d49";
+  return "#6d665b";
+}
+
+
+/* ---- app.js ---- */
+
+const els = {
+  size: document.getElementById("sizeSelect"),
+  floors: document.getElementById("floorCountInput"),
+  rooms: document.getElementById("roomCountInput"),
+  seed: document.getElementById("seedInput"),
+  floorTexture: document.getElementById("floorTextureSelect"),
+  theme: document.getElementById("themeSelect"),
+  zoom: document.getElementById("zoomInput"),
+  debugLabels: document.getElementById("debugLabelsInput"),
+  artWalls: document.getElementById("artWallsInput"),
+  revealAll: document.getElementById("revealAllInput"),
+  autoFollow: document.getElementById("autoFollowInput"),
+  elfSearcher: document.getElementById("elfSearcherInput"),
+  generate: document.getElementById("generateBtn"),
+  copy: document.getElementById("copyBtn"),
+  updateSave: document.getElementById("updateSaveBtn"),
+  load: document.getElementById("loadBtn"),
+  saveText: document.getElementById("saveText"),
+  mapFrame: document.getElementById("mapFrame"),
+  mapStage: document.getElementById("mapStage"),
+  canvas: document.getElementById("dungeonCanvas"),
+  dungeonName: document.getElementById("dungeonName"),
+  dungeonMeta: document.getElementById("dungeonMeta"),
+  floorTabs: document.getElementById("floorTabs"),
+  cellDetails: document.getElementById("cellDetails"),
+  eventLog: document.getElementById("eventLog"),
+  generationStatus: document.getElementById("generationStatus"),
+  generationStatusText: document.getElementById("generationStatusText"),
+  generationProgress: document.getElementById("generationProgress"),
+};
+
+const renderer = new DungeonRenderer(els.canvas);
+let dungeon = null;
+
+const SEED_PREFIXES = [
+  "ashen",
+  "black",
+  "bloodied",
+  "broken",
+  "buried",
+  "crimson",
+  "cursed",
+  "dusken",
+  "elder",
+  "fallen",
+  "forgotten",
+  "frosted",
+  "ghostly",
+  "gilded",
+  "hollow",
+  "iron",
+  "moonlit",
+  "mournful",
+  "obsidian",
+  "ruined",
+  "shadowed",
+  "shattered",
+  "silver",
+  "sunken",
+  "thorned",
+  "veiled",
+  "whispering",
+];
+
+const SEED_SUFFIXES = [
+  "barrows",
+  "catacombs",
+  "chambers",
+  "citadel",
+  "crypts",
+  "deep",
+  "gate",
+  "grottos",
+  "halls",
+  "hold",
+  "labyrinth",
+  "maw",
+  "monastery",
+  "ossuary",
+  "passages",
+  "reliquary",
+  "ruins",
+  "sanctum",
+  "sepulcher",
+  "spire",
+  "temple",
+  "tombs",
+  "vaults",
+  "warrens",
+];
+
+els.generate.addEventListener("click", async () => {
+  const size = els.size.value;
+  const floorCount = size === "super" ? Number(els.floors.value) : undefined;
+  if (floorCount) els.floors.value = floorCount;
+  setGenerating(true, "Preparing dungeon...", 0);
+  try {
+    dungeon = await generateDungeonAsync({
+      size,
+      floorCount,
+      roomCount: Number(els.rooms.value),
+      seed: ensureSeed(),
+      floorTile: els.floorTexture.value,
+      themeId: els.theme.value,
+    }, updateGenerationStatus);
+    await refresh();
+    centerOnParty();
+  } finally {
+    setGenerating(false);
+  }
+});
+
+els.copy.addEventListener("click", async () => {
+  if (!dungeon) return;
+  els.saveText.value = serializeDungeon(dungeon);
+  await navigator.clipboard.writeText(els.saveText.value);
+});
+
+els.updateSave.addEventListener("click", () => {
+  if (!dungeon) return;
+  els.saveText.value = serializeDungeon(dungeon);
+});
+
+els.load.addEventListener("click", () => {
+  try {
+    dungeon = parseDungeon(els.saveText.value);
+    refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+els.zoom.addEventListener("input", () => {
+  if (dungeon) refreshAndMaybeFollow();
+});
+
+els.debugLabels.addEventListener("change", () => {
+  if (dungeon) renderOnly();
+});
+
+els.artWalls.addEventListener("change", () => {
+  if (dungeon) renderOnly();
+});
+
+els.revealAll.addEventListener("change", () => {
+  if (dungeon) renderOnly();
+});
+
+els.autoFollow.addEventListener("change", () => {
+  centerOnParty();
+});
+
+els.canvas.addEventListener("click", async (event) => {
+  if (!dungeon) return;
+  const target = canvasInteractionTarget(event);
+  if (!target) return;
+  const cell = dungeon.floors[dungeon.currentFloor]?.wallGrid[target.y]?.[target.x];
+  const feature = cell?.edgeFeatures?.[target.edge];
+  let changed = false;
+  if (feature && feature.doorType !== "secret") {
+    changed = interactWithDoor(dungeon, dungeon.currentFloor, target.x, target.y, target.edge);
+  } else {
+    changed = searchWall(dungeon, dungeon.currentFloor, target.x, target.y, target.edge, {
+      elf: els.elfSearcher.checked,
+    });
+  }
+  await refresh();
+  if (changed) centerOnParty();
+});
+
+document.querySelectorAll("[data-move]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!dungeon) return;
+    if (movePlayer(dungeon, button.dataset.move)) refreshAndMaybeFollow();
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  const direction = keyToDirection(event.key);
+  if (!direction || isTypingTarget(event.target) || !dungeon) return;
+  event.preventDefault();
+  if (movePlayer(dungeon, direction)) refreshAndMaybeFollow();
+});
+
+els.size.addEventListener("change", () => {
+  const isSuper = els.size.value === "super";
+  els.floors.disabled = false;
+  els.floors.min = isSuper ? 2 : 1;
+  if (!els.floors.value) els.floors.value = isSuper ? 10 : 4;
+  if (isSuper && Number(els.floors.value) < 10) els.floors.value = 10;
+  if (isSuper && Number(els.floors.value) < 2) els.floors.value = 2;
+  els.floors.title = "Maximum floors the random floor generator may create.";
+  syncRoomCountHelp();
+});
+
+els.rooms.addEventListener("input", syncRoomCountHelp);
+
+async function refresh() {
+  await renderOnly();
+  updatePanels();
+}
+
+async function refreshAndMaybeFollow() {
+  await refresh();
+  centerOnParty();
+}
+
+async function renderOnly() {
+  await renderer.render(dungeon, Number(els.zoom.value), {
+    debugLabels: els.debugLabels.checked,
+    artWalls: els.artWalls.checked,
+    revealAll: els.revealAll.checked,
+  });
+}
+
+function updatePanels() {
+  els.dungeonName.textContent = dungeon.name;
+  const theme = dungeon.theme?.label ?? dungeon.themeId ?? "Theme";
+  els.dungeonMeta.textContent = `${dungeon.sizeCategory} | ${theme} | ${dungeon.floorCount} layer(s) | ${dungeon.wallGridWidth} x ${dungeon.wallGridHeight} wall grid | turn ${dungeon.turn}`;
+  updateFloorTabs();
+  updateCellDetails();
+  updateEventLog();
+}
+
+function updateFloorTabs() {
+  els.floorTabs.innerHTML = "";
+  for (let i = 0; i < dungeon.floorCount; i += 1) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `F${i + 1}`;
+    if (i === dungeon.currentFloor) button.classList.add("active");
+    button.addEventListener("click", () => {
+      dungeon.currentFloor = i;
+      refresh();
+    });
+    els.floorTabs.append(button);
+  }
+}
+
+function updateCellDetails() {
+  els.cellDetails.innerHTML = "";
+  for (const [key, value] of describeCell(dungeon)) {
+    const dt = document.createElement("dt");
+    dt.textContent = key;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    els.cellDetails.append(dt, dd);
+  }
+}
+
+function updateEventLog() {
+  els.eventLog.innerHTML = "";
+  for (const entry of dungeon.eventLog.slice(0, 12)) {
+    const li = document.createElement("li");
+    li.textContent = `Turn ${entry.turn}: ${entry.text}`;
+    els.eventLog.append(li);
+  }
+}
+
+function centerOnParty() {
+  els.mapFrame.classList.toggle("camera-follow", Boolean(els.autoFollow.checked));
+  if (!els.autoFollow.checked) {
+    els.mapStage.style.transform = "";
+    return;
+  }
+  if (!dungeon || dungeon.player.floorIndex !== dungeon.currentFloor) return;
+  const cellSize = Number(els.zoom.value);
+  const targetX = (dungeon.player.wallX + 0.5) * cellSize;
+  const targetY = (dungeon.player.wallY + 0.5) * cellSize;
+  const tx = els.mapFrame.clientWidth / 2 - targetX;
+  const ty = els.mapFrame.clientHeight / 2 - targetY;
+  els.mapStage.style.transform = `translate(${tx}px, ${ty}px)`;
+}
+
+function canvasInteractionTarget(event) {
+  const rect = els.canvas.getBoundingClientRect();
+  const cellSize = Number(els.zoom.value);
+  const x = Math.floor((event.clientX - rect.left) / cellSize);
+  const y = Math.floor((event.clientY - rect.top) / cellSize);
+  if (x < 0 || y < 0 || x >= dungeon.wallGridWidth || y >= dungeon.wallGridHeight) return null;
+  const localX = ((event.clientX - rect.left) / cellSize) - x;
+  const localY = ((event.clientY - rect.top) / cellSize) - y;
+  const distances = [
+    ["north", localY],
+    ["south", 1 - localY],
+    ["west", localX],
+    ["east", 1 - localX],
+  ].sort((a, b) => a[1] - b[1]);
+  return { x, y, edge: distances[0][0] };
+}
+
+function setGenerating(isGenerating, message = "", value = 0) {
+  els.generate.disabled = isGenerating;
+  els.generationStatus.hidden = !isGenerating;
+  els.generationStatusText.textContent = message;
+  els.generationProgress.value = value;
+}
+
+function updateGenerationStatus(step) {
+  const completed = Math.max(0, step.floorIndex + 1);
+  const extraPhase = step.phase === "connections" ? 0.5 : step.phase === "complete" ? 1 : 0;
+  const total = Math.max(1, step.floorCount + 1);
+  els.generationStatus.hidden = false;
+  els.generationStatusText.textContent = step.message;
+  els.generationProgress.value = Math.min(1, (completed + extraPhase) / total);
+}
+
+function syncRoomCountHelp() {
+  const preset = SIZE_PRESETS[els.size.value] ?? SIZE_PRESETS.medium;
+  const minimum = Math.max(6, Math.floor(Math.min(preset.pixelWidth, preset.pixelHeight) / 100));
+  const maximum = Math.floor(minimum * 2.5);
+  els.rooms.placeholder = `random ${minimum}-${maximum}`;
+  els.rooms.title = els.rooms.value
+    ? `Specific room count. Values clamp to ${minimum}-${maximum} for this size.`
+    : `Blank rolls a random room count from ${minimum} to ${maximum}.`;
+}
+
+function ensureSeed() {
+  if (!els.seed.value.trim()) {
+    els.seed.value = fantasySeed();
+  }
+  return els.seed.value.trim();
+}
+
+function fantasySeed() {
+  const prefix = chooseSeedWord(SEED_PREFIXES);
+  const suffix = chooseSeedWord(SEED_SUFFIXES);
+  return `${prefix}-${suffix}`;
+}
+
+function chooseSeedWord(words) {
+  return words[Math.floor(Math.random() * words.length)];
+}
+
+els.size.dispatchEvent(new Event("change"));
+ensureSeed();
+els.generate.click();
+
+function keyToDirection(key) {
+  const normalized = key.toLowerCase();
+  if (normalized === "arrowup" || normalized === "w") return "north";
+  if (normalized === "arrowright" || normalized === "d") return "east";
+  if (normalized === "arrowdown" || normalized === "s") return "south";
+  if (normalized === "arrowleft" || normalized === "a") return "west";
+  return null;
+}
+
+function isTypingTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+}
+
+</script>
 </body>
 </html>
+
