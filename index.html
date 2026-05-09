@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dungeon Generator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="toolbar" aria-label="Dungeon generator controls">
+      <div class="brand-block">
+        <h1>Dungeon Generator</h1>
+        <p>Logical map first. Art layers second. Save state always.</p>
+      </div>
+
+      <div class="control-grid">
+        <label>
+          Size
+          <select id="sizeSelect">
+            <option value="small">Small 1200 x 1200</option>
+            <option value="medium" selected>Medium 2400 x 2400</option>
+            <option value="large">Large 4800 x 4800</option>
+            <option value="super">Super 9600 x 9600</option>
+          </select>
+        </label>
+
+        <label>
+          Floors
+          <input id="floorCountInput" type="number" min="1" max="10" value="1">
+        </label>
+
+        <label>
+          Rooms
+          <input id="roomCountInput" type="number" min="0" max="240" placeholder="random">
+        </label>
+
+        <label>
+          Seed
+          <input id="seedInput" type="text" placeholder="random fantasy seed">
+        </label>
+
+        <label>
+          Floor
+          <select id="floorTextureSelect">
+            <option value="stone_standard_square" selected>Stone Standard</option>
+            <option value="stone_dark_square">Stone Dark</option>
+            <option value="stone_rough_square">Stone Rough</option>
+            <option value="stone_sandstone_square">Stone Sandstone</option>
+            <option value="stone_taiga_square">Stone Taiga</option>
+            <option value="stone_standard_hex">Stone Standard Hex Texture</option>
+          </select>
+        </label>
+
+        <label>
+          Theme
+          <select id="themeSelect">
+            <option value="standard_dungeon" selected>Standard Dungeon</option>
+            <option value="crypt">Crypt</option>
+            <option value="ruined_stronghold">Ruined Stronghold</option>
+            <option value="flooded_halls">Flooded Halls</option>
+            <option value="occult_depths">Occult Depths</option>
+          </select>
+        </label>
+
+        <label>
+          Zoom
+          <input id="zoomInput" type="range" min="8" max="48" value="18">
+        </label>
+
+        <label class="check-control">
+          Debug labels
+          <input id="debugLabelsInput" type="checkbox">
+        </label>
+
+        <label class="check-control">
+          Art walls
+          <input id="artWallsInput" type="checkbox" checked>
+        </label>
+
+        <label class="check-control">
+          Reveal all
+          <input id="revealAllInput" type="checkbox">
+        </label>
+
+        <label class="check-control">
+          Auto follow party
+          <input id="autoFollowInput" type="checkbox" checked>
+        </label>
+
+        <label class="check-control">
+          Elf searcher
+          <input id="elfSearcherInput" type="checkbox">
+        </label>
+      </div>
+
+      <div class="button-row">
+        <button id="generateBtn" type="button">Generate</button>
+        <button id="copyBtn" type="button">Copy Save</button>
+        <button id="updateSaveBtn" type="button">Update Save Text</button>
+        <button id="loadBtn" type="button">Load From Text</button>
+      </div>
+
+      <div id="generationStatus" class="generation-status" hidden>
+        <span id="generationStatusText">Preparing dungeon...</span>
+        <progress id="generationProgress" max="1" value="0"></progress>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <section class="map-panel" aria-label="Dungeon map">
+        <div class="map-header">
+          <div>
+            <h2 id="dungeonName">Unnamed Dungeon</h2>
+            <p id="dungeonMeta">No dungeon generated yet.</p>
+          </div>
+          <div class="floor-tabs" id="floorTabs" aria-label="Dungeon floors"></div>
+        </div>
+
+        <div class="map-frame" id="mapFrame">
+          <div class="map-stage" id="mapStage">
+            <canvas id="dungeonCanvas" width="960" height="640" aria-label="Generated dungeon map"></canvas>
+          </div>
+        </div>
+
+        <div class="movement-pad" aria-label="Player movement">
+          <button data-move="north" type="button">North</button>
+          <button data-move="west" type="button">West</button>
+          <button data-move="east" type="button">East</button>
+          <button data-move="south" type="button">South</button>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="info-block">
+          <h2>Current Cell</h2>
+          <dl id="cellDetails"></dl>
+        </section>
+
+        <section class="info-block">
+          <h2>Event Log</h2>
+          <ol id="eventLog"></ol>
+        </section>
+
+        <section class="info-block save-block">
+          <h2>Save / Load JSON</h2>
+          <textarea id="saveText" spellcheck="false"></textarea>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
