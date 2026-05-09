@@ -1499,13 +1499,13 @@ class DungeonRenderer {
       for (const floorCell of row) {
         const src = FLOOR_TILES[floorCell.tile] ?? FLOOR_TILES.stone_standard_square;
         const img = await this.loadImage(src);
-        floorCtx.drawImage(
-          img,
-          floorCell.floorX * scaledFloorSize,
-          floorCell.floorY * scaledFloorSize,
-          scaledFloorSize,
-          scaledFloorSize
-        );
+        const x = floorCell.floorX * scaledFloorSize;
+        const y = floorCell.floorY * scaledFloorSize;
+        if (img) {
+          floorCtx.drawImage(img, x, y, scaledFloorSize, scaledFloorSize);
+        } else {
+          drawFallbackFloorTile(floorCtx, x, y, scaledFloorSize, floorCell.tile);
+        }
       }
     }
     floorCtx.fillStyle = "rgba(12, 10, 8, 0.24)";
@@ -1517,10 +1517,10 @@ class DungeonRenderer {
 
   loadImage(src) {
     if (this.imageCache.has(src)) return this.imageCache.get(src);
-    const promise = new Promise((resolve, reject) => {
+    const promise = new Promise((resolve) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = reject;
+      img.onerror = () => resolve(null);
       img.src = src;
     });
     this.imageCache.set(src, promise);
@@ -1585,6 +1585,10 @@ class DungeonRenderer {
     };
     const corner = await this.loadImage(WALL_ASSETS.cornerOutTrue2x2);
     const floor = dungeon.floors[dungeon.currentFloor];
+    if (!wallImages[1] || !wallImages[2] || !wallImages[3] || !wallImages[4] || !corner) {
+      this.drawWalls(dungeon, cellSize);
+      return;
+    }
 
     this.drawHorizontalWallRuns(floor, "north", wallImages, cellSize);
     this.drawHorizontalWallRuns(floor, "south", wallImages, cellSize);
@@ -1727,13 +1731,21 @@ class DungeonRenderer {
       if (door.doorType === "open_chamber") {
         ctx.save();
         ctx.globalAlpha = 0.82;
-        drawDoorAsset(ctx, doorImages.open, x, y, cellSize, { ...door, width: 1 });
+        if (doorImages.open) {
+          drawDoorAsset(ctx, doorImages.open, x, y, cellSize, { ...door, width: 1 });
+        } else {
+          drawFallbackDoor(ctx, x, y, cellSize, { ...door, width: 1 });
+        }
         ctx.restore();
       } else {
         const img = door.width > 1 ? doorImages.double : doorImages.single;
         ctx.save();
         if (door.open) ctx.globalAlpha = 0.52;
-        drawDoorAsset(ctx, img, x, y, cellSize, door);
+        if (img) {
+          drawDoorAsset(ctx, img, x, y, cellSize, door);
+        } else {
+          drawFallbackDoor(ctx, x, y, cellSize, door);
+        }
         ctx.restore();
         if (door.locked && door.revealed) drawLockMarker(ctx, x, y, cellSize, door.wall);
       }
@@ -1894,7 +1906,35 @@ function line(ctx, x1, y1, x2, y2) {
   ctx.stroke();
 }
 
+function drawFallbackFloorTile(ctx, x, y, size, tileKey = "") {
+  const palette = tileKey.includes("dark")
+    ? ["#2f3232", "#3b3f3f"]
+    : tileKey.includes("sandstone")
+      ? ["#665b45", "#766b52"]
+      : ["#4b4e4a", "#5a5d58"];
+  ctx.fillStyle = palette[0];
+  ctx.fillRect(x, y, size, size);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+  ctx.lineWidth = Math.max(1, size * 0.006);
+  const step = Math.max(18, size / 8);
+  for (let py = y; py <= y + size; py += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, py);
+    ctx.lineTo(x + size, py + Math.sin(py * 0.03) * step * 0.28);
+    ctx.stroke();
+  }
+  for (let px = x; px <= x + size; px += step) {
+    ctx.beginPath();
+    ctx.moveTo(px, y);
+    ctx.lineTo(px + Math.cos(px * 0.03) * step * 0.28, y + size);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.fillRect(x, y, size, size);
+}
+
 function drawAsset(ctx, img, x, y, width, height, rotation) {
+  if (!img) return;
   ctx.save();
   ctx.translate(x + width / 2, y + height / 2);
   ctx.rotate(rotation);
@@ -1903,6 +1943,7 @@ function drawAsset(ctx, img, x, y, width, height, rotation) {
 }
 
 function drawRotatedAsset(ctx, img, x, y, width, height, rotation) {
+  if (!img) return;
   ctx.save();
   ctx.translate(x + width / 2, y + height / 2);
   ctx.rotate(rotation);
@@ -2081,6 +2122,31 @@ function drawDoorAsset(ctx, img, x, y, cellSize, door) {
   } else {
     drawAsset(ctx, img, x - assetWidth / 2, centerY - assetHeight / 2, assetWidth, assetHeight, -Math.PI / 2);
   }
+}
+
+function drawFallbackDoor(ctx, x, y, cellSize, door) {
+  const widthCells = door.width > 1 ? 2 : 1;
+  const long = cellSize * widthCells * 0.72;
+  const thick = Math.max(3, cellSize * 0.16);
+  const centerX = x + (cellSize * widthCells) / 2;
+  const centerY = y + (cellSize * widthCells) / 2;
+  let rect;
+  if (door.wall === "north") {
+    rect = { x: centerX - long / 2, y: y - thick / 2, width: long, height: thick };
+  } else if (door.wall === "south") {
+    rect = { x: centerX - long / 2, y: y + cellSize - thick / 2, width: long, height: thick };
+  } else if (door.wall === "east") {
+    rect = { x: x + cellSize - thick / 2, y: centerY - long / 2, width: thick, height: long };
+  } else {
+    rect = { x: x - thick / 2, y: centerY - long / 2, width: thick, height: long };
+  }
+  ctx.save();
+  ctx.fillStyle = door.open ? "#b58a54" : "#7b4d2a";
+  ctx.strokeStyle = "#2b2018";
+  ctx.lineWidth = Math.max(1, cellSize * 0.05);
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.restore();
 }
 
 function drawLockMarker(ctx, x, y, cellSize, wall) {

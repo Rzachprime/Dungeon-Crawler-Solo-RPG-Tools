@@ -38,6 +38,7 @@ The prototype uses ES modules and sibling tile assets, so it should be served fr
 - The static map layer renders once per floor/mode and is reused while movement, torch lighting, and the party token update from array state.
 - Zoom uses CSS `transform: scale()` against a stable backing canvas instead of resizing the canvas and repainting the whole dungeon.
 - Save text is generated only when the user clicks Copy Save or Update Save, avoiding full-dungeon JSON serialization during movement.
+- If the local `Tiles` artwork folder is missing, image loading falls back to generated base floor textures, line walls, and simple door markers so the GitHub Pages build remains usable.
 - The map viewport is fixed at about 900 x 900 pixels.
 - Auto Follow keeps the party token fixed in the center of the viewport by moving the map underneath it.
 - Disabling Auto Follow restores manual scrolling for scouting, familiar-spirit exploration, and free map inspection.
