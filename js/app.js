@@ -1,4 +1,4 @@
-import { generateDungeonAsync, interactWithDoor, movePlayer, searchWall } from "./dungeon-generator.js";
+import { generateDungeonAsync, interactWithDoor, movePlayer, revealElfSecretDoorsNearParty, searchWall } from "./dungeon-generator.js";
 import { parseDungeon, serializeDungeon, SIZE_PRESETS } from "./dungeon-state.js";
 import { describeCell, DungeonRenderer } from "./dungeon-renderer.js";
 
@@ -8,6 +8,7 @@ const els = {
   rooms: document.getElementById("roomCountInput"),
   seed: document.getElementById("seedInput"),
   floorTexture: document.getElementById("floorTextureSelect"),
+  dungeonType: document.getElementById("dungeonTypeSelect"),
   theme: document.getElementById("themeSelect"),
   zoom: document.getElementById("zoomInput"),
   debugLabels: document.getElementById("debugLabelsInput"),
@@ -105,6 +106,7 @@ els.generate.addEventListener("click", async () => {
       roomCount: Number(els.rooms.value),
       seed: ensureSeed(),
       floorTile: els.floorTexture.value,
+      dungeonTypeId: els.dungeonType.value,
       themeId: els.theme.value,
     }, updateGenerationStatus);
     await refresh();
@@ -162,10 +164,13 @@ els.canvas.addEventListener("click", async (event) => {
   const feature = cell?.edgeFeatures?.[target.edge];
   let changed = false;
   if (feature && feature.doorType !== "secret") {
-    changed = interactWithDoor(dungeon, dungeon.currentFloor, target.x, target.y, target.edge);
+    changed = interactWithDoor(dungeon, dungeon.currentFloor, target.x, target.y, target.edge, {
+      autoPass: true,
+    });
   } else {
     changed = searchWall(dungeon, dungeon.currentFloor, target.x, target.y, target.edge, {
       elf: els.elfSearcher.checked,
+      autoPass: true,
     });
   }
   await refresh();
@@ -210,6 +215,7 @@ async function refreshAndMaybeFollow() {
 }
 
 async function renderOnly() {
+  if (els.elfSearcher.checked) revealElfSecretDoorsNearParty(dungeon, dungeon.currentFloor, 3);
   await renderer.render(dungeon, Number(els.zoom.value), {
     debugLabels: els.debugLabels.checked,
     artWalls: els.artWalls.checked,
@@ -220,7 +226,13 @@ async function renderOnly() {
 function updatePanels() {
   els.dungeonName.textContent = dungeon.name;
   const theme = dungeon.theme?.label ?? dungeon.themeId ?? "Theme";
-  els.dungeonMeta.textContent = `${dungeon.sizeCategory} | ${theme} | ${dungeon.floorCount} layer(s) | ${dungeon.wallGridWidth} x ${dungeon.wallGridHeight} wall grid | turn ${dungeon.turn}`;
+  const dungeonType = dungeon.dungeonType?.label ?? dungeon.dungeonTypeId ?? "Dungeon";
+  const districtLabels = dungeon.floors[dungeon.currentFloor]?.districts?.map((district) => district.label) ?? [];
+  const distinctDistricts = [...new Set(districtLabels)];
+  const districtSummary = distinctDistricts.length
+    ? ` | ${distinctDistricts.length === 1 ? distinctDistricts[0] : `${distinctDistricts.length} districts`}`
+    : "";
+  els.dungeonMeta.textContent = `${dungeon.sizeCategory} | ${dungeonType} | ${theme}${districtSummary} | ${dungeon.floorCount} layer(s) | ${dungeon.wallGridWidth} x ${dungeon.wallGridHeight} wall grid | turn ${dungeon.turn}`;
   updateFloorTabs();
   updateCellDetails();
   updateEventLog();
@@ -311,12 +323,20 @@ function updateGenerationStatus(step) {
 
 function syncRoomCountHelp() {
   const preset = SIZE_PRESETS[els.size.value] ?? SIZE_PRESETS.medium;
-  const minimum = Math.max(6, Math.floor(Math.min(preset.pixelWidth, preset.pixelHeight) / 100));
+  const minimum = minimumRoomCountForSize(els.size.value, preset);
   const maximum = Math.floor(minimum * 2.5);
   els.rooms.placeholder = `random ${minimum}-${maximum}`;
   els.rooms.title = els.rooms.value
     ? `Specific room count. Values clamp to ${minimum}-${maximum} for this size.`
     : `Blank rolls a random room count from ${minimum} to ${maximum}.`;
+}
+
+function minimumRoomCountForSize(size, preset) {
+  if (size === "small") return 6;
+  if (size === "medium") return 24;
+  if (size === "large") return 48;
+  if (size === "super") return 96;
+  return Math.max(6, Math.floor(Math.min(preset.pixelWidth, preset.pixelHeight) / 100));
 }
 
 function ensureSeed() {
