@@ -3529,6 +3529,13 @@ function finishDungeonGeneration(dungeon, rng = Math.random) {
   const firstRoom = chooseStartingRoom(dungeon);
   if (firstRoom) {
     openStartingRoomExit(firstRoom);
+    const startExitRepaired = ensureStartingRoomInwardExit(dungeon, firstRoom, rng);
+    if (startExitRepaired) {
+      dungeon.eventLog.push({
+        turn: 1,
+        text: "Start audit opened a clear entrance route.",
+      });
+    }
     markSurfaceEntrance(dungeon, firstRoom);
     dungeon.player.floorIndex = 0;
     dungeon.player.wallX = Math.floor(firstRoom.x + firstRoom.width / 2);
@@ -3593,6 +3600,39 @@ function openStartingRoomExit(room) {
   door.lockType = null;
   door.open = true;
   if (door.doorType === "secret") door.doorType = "normal";
+}
+
+function ensureStartingRoomInwardExit(dungeon, room, rng) {
+  if (!room || dungeon.sizeCategory !== "super" || startingRoomHasInwardExit(dungeon, room)) return false;
+  const startCenter = center(room);
+  const dungeonCenter = { x: (dungeon.wallGridWidth - 1) / 2, y: (dungeon.wallGridHeight - 1) / 2 };
+  const target = dungeon.rooms
+    .filter((candidate) => candidate.floorIndex === room.floorIndex && candidate.id !== room.id && !candidate.tags?.includes("boss"))
+    .map((candidate) => ({
+      room: candidate,
+      distance: manhattan(startCenter, center(candidate)),
+      inwardBias: manhattan(center(candidate), dungeonCenter),
+    }))
+    .sort((a, b) => a.inwardBias - b.inwardBias || a.distance - b.distance)[0]?.room;
+  if (!target) return false;
+  connectRooms(dungeon, room, target, rng, "geomorph_start_route");
+  for (const door of room.doors ?? []) {
+    if (door.doorType === "secret") door.doorType = "normal";
+    door.revealed = true;
+    door.locked = false;
+    door.lockType = null;
+    door.open = true;
+  }
+  return true;
+}
+
+function startingRoomHasInwardExit(dungeon, room) {
+  const dungeonCenter = { x: (dungeon.wallGridWidth - 1) / 2, y: (dungeon.wallGridHeight - 1) / 2 };
+  const distanceToCenter = (point) => Math.abs(point.x - dungeonCenter.x) + Math.abs(point.y - dungeonCenter.y);
+  return (room.doors ?? []).some((door) => {
+    if (!door.revealed || door.locked || door.doorType === "secret" || !door.inside || !door.outside) return false;
+    return distanceToCenter(door.outside) < distanceToCenter(door.inside);
+  });
 }
 
 function markSurfaceEntrance(dungeon, room) {
