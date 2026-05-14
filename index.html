@@ -459,7 +459,7 @@ textarea {
 
         <label class="check-control">
           Art walls
-          <input id="artWallsInput" type="checkbox">
+          <input id="artWallsInput" type="checkbox" checked>
         </label>
 
         <label class="check-control">
@@ -731,7 +731,6 @@ function validateDungeon(dungeon) {
   }
 }
 
-
 /* ---- standard-geomorph-library.js ---- */
 const sources = {
   arden: "Arden Vul style: dense architectural precincts, set-piece rooms, strong axes, and ruins/caves intruding into built space.",
@@ -743,6 +742,7 @@ const r = (id, x, y, width, height, role, tags = []) => ({ id, x, y, width, heig
 const c = (x, y, width, height, role = "passage") => ({ x, y, width, height, role });
 const d = (from, side, to = "corridor", kind = "door") => ({ from, side, to, kind });
 const s = (side, offset, width = 2) => ({ side, offset, width });
+const t = (x, y, side, kind = "door") => ({ x, y, side, kind });
 
 const geomorph = (spec) => {
   const merged = {
@@ -756,13 +756,60 @@ const geomorph = (spec) => {
     doors: [],
     ...spec
   };
-  const sockets = merged.sockets?.length ? merged.sockets : inferSocketsFromCorridors(merged);
+  const inferredSockets = merged.sockets?.length ? merged.sockets : inferSocketsFromCorridors(merged);
+  const sockets = normalizeContractSockets(inferredSockets, merged);
+  const cellMap = merged.cellMap?.length ? merged.cellMap : buildLegacyCellMap(merged, sockets);
+  const edgeMap = merged.edgeMap ?? (cellMap?.length ? buildEdgeMap(cellMap, inferDoorThresholds(merged, cellMap), merged.rooms) : undefined);
   return {
     ...merged,
     sockets,
+    cellMap,
+    edgeMap,
     exits: merged.exits?.length ? merged.exits : [...new Set(sockets.map((socket) => socket.side))],
   };
 };
+
+const tracedGeomorph = (spec, thresholds = []) => geomorph({
+  ...spec,
+  edgeMap: buildEdgeMap(spec.cellMap, thresholds, spec.rooms)
+});
+
+function buildEdgeMap(cellMap = [], thresholds = [], rooms = []) {
+  const edgeMap = {};
+  const isWalkable = (x, y) => {
+    const cell = cellMap[y]?.[x];
+    return cell === "." || cell === "R";
+  };
+  const setEdge = (x, y, side, kind) => {
+    const key = `${x},${y}`;
+    edgeMap[key] = edgeMap[key] ?? {};
+    edgeMap[key][side] = kind;
+  };
+  for (let y = 0; y < cellMap.length; y += 1) {
+    for (let x = 0; x < cellMap[y].length; x += 1) {
+      if (!isWalkable(x, y)) continue;
+      if (!isWalkable(x, y - 1)) setEdge(x, y, "n", "wall");
+      if (!isWalkable(x + 1, y)) setEdge(x, y, "e", "wall");
+      if (!isWalkable(x, y + 1)) setEdge(x, y, "s", "wall");
+      if (!isWalkable(x - 1, y)) setEdge(x, y, "w", "wall");
+    }
+  }
+  for (const room of rooms) {
+    for (let y = room.y; y < room.y + room.height; y += 1) {
+      for (let x = room.x; x < room.x + room.width; x += 1) {
+        if (!isWalkable(x, y)) continue;
+        if (y === room.y) setEdge(x, y, "n", "wall");
+        if (x === room.x + room.width - 1) setEdge(x, y, "e", "wall");
+        if (y === room.y + room.height - 1) setEdge(x, y, "s", "wall");
+        if (x === room.x) setEdge(x, y, "w", "wall");
+      }
+    }
+  }
+  for (const threshold of thresholds) {
+    setEdge(threshold.x, threshold.y, threshold.side, threshold.kind);
+  }
+  return edgeMap;
+}
 
 function inferSocketsFromCorridors(geomorphSpec) {
   const size = geomorphSpec.size ?? 10;
@@ -801,6 +848,182 @@ function preferredFallbackSocketOffset(side, size) {
   return side === "north" || side === "west" ? 2 : 7;
 }
 
+function contractOffsetsForSize(size) {
+  return size === 20 ? [2, 7, 12, 17] : [2, 7];
+}
+
+function nearestContractOffset(offset, size) {
+  const allowed = contractOffsetsForSize(size);
+  return allowed.reduce((best, candidate) => {
+    const bestDistance = Math.abs(best - offset);
+    const candidateDistance = Math.abs(candidate - offset);
+    return candidateDistance < bestDistance ? candidate : best;
+  }, allowed[0]);
+}
+
+function normalizeContractSockets(rawSockets, geomorphSpec) {
+  const size = geomorphSpec.size ?? 10;
+  const sockets = rawSockets.map((socket) => s(socket.side, nearestContractOffset(socket.offset, size), 2));
+  for (const side of geomorphSpec.exits ?? []) {
+    if (!sockets.some((socket) => socket.side === side)) {
+      sockets.push(s(side, preferredFallbackSocketOffset(side, size), 2));
+    }
+  }
+  return uniqueSocketList(sockets);
+}
+
+function buildLegacyCellMap(geomorphSpec, sockets) {
+  const size = geomorphSpec.size ?? 10;
+  if (!(geomorphSpec.rooms?.length || geomorphSpec.corridors?.length || sockets?.length)) return [];
+  const grid = Array.from({ length: size }, () => Array.from({ length: size }, () => "#"));
+  const paintRect = (rect, mark) => {
+    for (let y = Math.max(0, rect.y); y < Math.min(size, rect.y + rect.height); y += 1) {
+      for (let x = Math.max(0, rect.x); x < Math.min(size, rect.x + rect.width); x += 1) {
+        grid[y][x] = mark;
+      }
+    }
+  };
+  for (const corridor of geomorphSpec.corridors ?? []) paintRect(corridor, ".");
+  for (const room of geomorphSpec.rooms ?? []) paintRect(room, "R");
+  for (const socket of sockets) carveSocketLane(grid, socket, size);
+  connectWalkableComponents(grid, size);
+  return grid.map((row) => row.join(""));
+}
+
+function carveSocketLane(grid, socket, size) {
+  const setOpen = (x, y) => {
+    if (x >= 0 && y >= 0 && x < size && y < size) grid[y][x] = ".";
+  };
+  const offsets = [socket.offset, socket.offset + 1];
+  if (socket.side === "north" || socket.side === "south") {
+    const start = socket.side === "north" ? 0 : size - 1;
+    const step = socket.side === "north" ? 1 : -1;
+    const centerY = socket.side === "north" ? Math.floor(size / 2) : Math.ceil(size / 2) - 1;
+    for (let y = start; socket.side === "north" ? y <= centerY : y >= centerY; y += step) {
+      for (const x of offsets) setOpen(x, y);
+    }
+  } else {
+    const start = socket.side === "west" ? 0 : size - 1;
+    const step = socket.side === "west" ? 1 : -1;
+    const centerX = socket.side === "west" ? Math.floor(size / 2) : Math.ceil(size / 2) - 1;
+    for (let x = start; socket.side === "west" ? x <= centerX : x >= centerX; x += step) {
+      for (const y of offsets) setOpen(x, y);
+    }
+  }
+}
+
+function connectWalkableComponents(grid, size) {
+  const isWalkable = (x, y) => grid[y]?.[x] === "." || grid[y]?.[x] === "R";
+  const keyOf = (x, y) => `${x},${y}`;
+  const parseKey = (key) => key.split(",").map(Number);
+  const components = () => {
+    const seen = new Set();
+    const groups = [];
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const start = keyOf(x, y);
+        if (!isWalkable(x, y) || seen.has(start)) continue;
+        const group = [];
+        const queue = [[x, y]];
+        seen.add(start);
+        while (queue.length) {
+          const [cx, cy] = queue.shift();
+          group.push(keyOf(cx, cy));
+          for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            const next = keyOf(nx, ny);
+            if (nx < 0 || ny < 0 || nx >= size || ny >= size || seen.has(next) || !isWalkable(nx, ny)) continue;
+            seen.add(next);
+            queue.push([nx, ny]);
+          }
+        }
+        groups.push(group);
+      }
+    }
+    return groups.sort((a, b) => b.length - a.length);
+  };
+  let groups = components();
+  while (groups.length > 1) {
+    const main = groups[0];
+    const other = groups[1];
+    let best = null;
+    for (const a of main) {
+      const [ax, ay] = parseKey(a);
+      for (const b of other) {
+        const [bx, by] = parseKey(b);
+        const distance = Math.abs(ax - bx) + Math.abs(ay - by);
+        if (!best || distance < best.distance) best = { ax, ay, bx, by, distance };
+      }
+    }
+    if (!best) break;
+    carveManhattanConnector(grid, best.ax, best.ay, best.bx, best.by);
+    groups = components();
+  }
+}
+
+function carveManhattanConnector(grid, ax, ay, bx, by) {
+  const setOpen = (x, y) => {
+    if (grid[y]?.[x] === "#") grid[y][x] = ".";
+  };
+  const stepX = ax <= bx ? 1 : -1;
+  for (let x = ax; x !== bx; x += stepX) setOpen(x, ay);
+  setOpen(bx, ay);
+  const stepY = ay <= by ? 1 : -1;
+  for (let y = ay; y !== by; y += stepY) setOpen(bx, y);
+  setOpen(bx, by);
+}
+
+function inferDoorThresholds(geomorphSpec, cellMap) {
+  const thresholds = [];
+  const requestedDoors = geomorphSpec.doors?.length ? geomorphSpec.doors : [];
+  const rooms = geomorphSpec.rooms ?? [];
+  for (const room of rooms) {
+    const roomDoors = requestedDoors.filter((door) => door.from === room.id);
+    const thresholdsBySide = findRoomThresholds(room, cellMap);
+    for (const threshold of thresholdsBySide) {
+      const matchingDoor = roomDoors.find((door) => edgeSideForDoorSide(door.side) === threshold.side);
+      thresholds.push({ ...threshold, kind: normalizeDoorKind(matchingDoor?.kind) });
+    }
+  }
+  return thresholds;
+}
+
+function normalizeDoorKind(kind) {
+  if (kind === "secret" || kind === "locked") return kind;
+  return "door";
+}
+
+function edgeSideForDoorSide(side) {
+  return { north: "n", east: "e", south: "s", west: "w" }[side];
+}
+
+function findRoomThresholds(room, cellMap) {
+  const thresholds = [];
+  const sideOrder = ["north", "east", "south", "west"];
+  const edgeSide = { north: "n", east: "e", south: "s", west: "w" };
+  const isWalkable = (x, y) => {
+    const cell = cellMap[y]?.[x];
+    return cell === "." || cell === "R";
+  };
+  for (const side of sideOrder) {
+    if (side === "north" || side === "south") {
+      const y = side === "north" ? room.y : room.y + room.height - 1;
+      const outsideY = side === "north" ? y - 1 : y + 1;
+      for (let x = room.x; x < room.x + room.width; x += 1) {
+        if (isWalkable(x, y) && isWalkable(x, outsideY)) thresholds.push({ x, y, side: edgeSide[side] });
+      }
+    } else {
+      const x = side === "west" ? room.x : room.x + room.width - 1;
+      const outsideX = side === "west" ? x - 1 : x + 1;
+      for (let y = room.y; y < room.y + room.height; y += 1) {
+        if (isWalkable(x, y) && isWalkable(outsideX, y)) thresholds.push({ x, y, side: edgeSide[side] });
+      }
+    }
+  }
+  return thresholds;
+}
+
 function uniqueSocketList(sockets) {
   const seen = new Set();
   return sockets.filter((socket) => {
@@ -812,208 +1035,672 @@ function uniqueSocketList(sockets) {
 }
 
 const NORMAL_GEOMORPHS = [
-  geomorph({
-    key: "crypt_cells_10_a", label: "Crypt Cells A", category: "tombs", exits: ["north", "east", "south"], tags: ["crypt", "dense", "barrowmaze"],
+  tracedGeomorph({
+    key: "surface_entrance_10_a", label: "Surface Entrance A", category: "architectural", exits: ["south", "east", "west"], tags: ["series_b", "surface_entrance", "entry", "stairs_up", "start_only", "generic"],
+    sourceNotes: [sources.geomorph],
+    sockets: [s("west", 7), s("east", 7), s("south", 7)],
+    cellMap: [
+      "##########",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "####..####",
+      "####..####",
+      "####..####",
+      "..........",
+      "..........",
+      "#######..#",
+    ],
+    rooms: [r("entry_hall", 2, 1, 6, 3, "surface_entrance", ["surface_entrance", "entry", "stairs_up"])],
+    corridors: [c(4, 4, 2, 5, "entry_axis"), c(0, 7, 10, 2, "cross_passage"), c(7, 7, 2, 3, "south_exit")],
+    doors: [d("entry_hall", "south", "corridor", "open_chamber")]
+  }, [t(4, 3, "s")]),
+  tracedGeomorph({
+    key: "surface_entrance_10_b", label: "Surface Entrance B", category: "ruins", exits: ["north", "south", "east"], tags: ["series_b", "surface_entrance", "entry", "broken_gate", "start_only", "ruined"],
+    sourceNotes: [sources.geomorph],
+    sockets: [s("north", 2), s("east", 7), s("south", 2)],
+    cellMap: [
+      "##....####",
+      "##....####",
+      "##..######",
+      "##..######",
+      "#RRRRR####",
+      "#RRRRR.RR#",
+      "#RRRRR.RR#",
+      "#RRRRR....",
+      "##..######",
+      "##..######",
+    ],
+    rooms: [r("broken_entry", 1, 4, 5, 4, "surface_entrance", ["surface_entrance", "entry", "ruined_gate"]), r("watch_niche", 7, 5, 2, 2, "watch_niche")],
+    corridors: [c(4, 0, 2, 10, "entry_axis"), c(5, 5, 5, 2, "east_passage")],
+    doors: [d("broken_entry", "east", "corridor", "open_chamber"), d("watch_niche", "west")]
+  }, [t(5, 5, "e"), t(7, 5, "w")]),
+  tracedGeomorph({
+    key: "crypt_cells_10_a", label: "Crypt Cells A", category: "tombs", exits: ["north", "east", "south"], tags: ["series_b", "crypt", "dense", "barrowmaze"],
     sourceNotes: [sources.barrowmaze, sources.geomorph],
+    sockets: [s("north", 2), s("east", 7), s("south", 2)],
+    cellMap: [
+      "##....####",
+      "#RRR..RRR#",
+      "#RRR..RRR#",
+      "#RRR..RRR#",
+      "..........",
+      "..........",
+      "#RRR..RRR#",
+      "#RRR..RRR.",
+      "#RRR..RRR.",
+      "##....####",
+    ],
     rooms: [r("west_cells", 1, 1, 3, 3, "burial_cells"), r("east_cells", 6, 1, 3, 3, "burial_cells"), r("ossuary", 1, 6, 3, 3, "ossuary"), r("sealed_tomb", 6, 6, 3, 3, "sealed_tomb")],
     corridors: [c(4, 0, 2, 10, "central_spine"), c(0, 4, 10, 2, "cross_passage")],
     doors: [d("west_cells", "east"), d("east_cells", "west"), d("ossuary", "east"), d("sealed_tomb", "west")]
-  }),
-  geomorph({
-    key: "crypt_cells_10_b", label: "Crypt Cells B", category: "tombs", exits: ["west", "east"], tags: ["crypt", "compact", "loop"],
+  }, [t(3, 2, "e"), t(6, 2, "w"), t(3, 7, "e"), t(6, 7, "w")]),
+  tracedGeomorph({
+    key: "crypt_cells_10_b", label: "Crypt Cells B", category: "tombs", exits: ["west", "east"], tags: ["series_b", "crypt", "compact", "loop"],
     sourceNotes: [sources.barrowmaze, sources.geomorph],
+    sockets: [s("west", 2), s("east", 2), s("west", 7), s("east", 7)],
+    cellMap: [
+      "##########",
+      "#RRRRRRRR#",
+      ".RRRRRRRR.",
+      ".RR....RR.",
+      "..........",
+      "..........",
+      ".RR....RR.",
+      ".RRRRRRRR.",
+      "#RRRRRRRR#",
+      "##########",
+    ],
     rooms: [r("north_tomb", 1, 1, 8, 2, "tomb_row"), r("south_tomb", 1, 7, 8, 2, "tomb_row"), r("center_shrine", 3, 4, 4, 2, "small_shrine")],
     corridors: [c(0, 4, 10, 2, "main_hall"), c(1, 3, 2, 4, "west_link"), c(7, 3, 2, 4, "east_link")],
     doors: [d("north_tomb", "south"), d("south_tomb", "north"), d("center_shrine", "north")]
-  }),
-  geomorph({
-    key: "barrow_cross_10_a", label: "Barrow Cross A", category: "tombs", exits: ["north", "east", "south", "west"], tags: ["cross", "tomb", "hub"],
+  }, [t(4, 2, "s"), t(4, 7, "n"), t(4, 4, "n")]),
+  tracedGeomorph({
+    key: "barrow_cross_10_a", label: "Barrow Cross A", category: "tombs", exits: ["north", "east", "south", "west"], tags: ["series_b", "cross", "tomb", "hub"],
     sourceNotes: [sources.barrowmaze, sources.geomorph],
+    sockets: [s("north", 2), s("east", 7), s("south", 2), s("west", 7)],
+    cellMap: [
+      "##....####",
+      "##.RRRR###",
+      "##.RRRR###",
+      "#RR....RR#",
+      "#RR....RR#",
+      "#RR....RR#",
+      "#RR....RR#",
+      "....RRRR..",
+      "##..RRRR##",
+      "##..######",
+    ],
     rooms: [r("north_chamber", 3, 1, 4, 2, "sarcophagus_room"), r("east_chamber", 7, 3, 2, 4, "burial_room"), r("south_chamber", 3, 7, 4, 2, "ossuary"), r("west_chamber", 1, 3, 2, 4, "burial_room")],
     corridors: [c(4, 0, 2, 10, "north_south_axis"), c(0, 4, 10, 2, "east_west_axis")],
     doors: [d("north_chamber", "south"), d("east_chamber", "west"), d("south_chamber", "north"), d("west_chamber", "east")]
-  }),
-  geomorph({
-    key: "reliquary_suite_10_a", label: "Reliquary Suite A", category: "tombs", exits: ["south", "east"], tags: ["reliquary", "locked", "barrowmaze"],
+  }, [t(3, 1, "w"), t(4, 2, "s"), t(7, 4, "w"), t(4, 7, "n"), t(2, 4, "e")]),
+  tracedGeomorph({
+    key: "reliquary_suite_10_a", label: "Reliquary Suite A", category: "tombs", exits: ["south", "east"], tags: ["series_b", "reliquary", "locked", "barrowmaze"],
     sourceNotes: [sources.barrowmaze],
+    sockets: [s("east", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "##########",
+      "##RRRRR###",
+      "##RRRRR###",
+      "##RRRRR###",
+      "####......",
+      "##RRRR.RR.",
+      "##RRRR.RR.",
+      "##RRRR.RR#",
+      "##..###..#",
+    ],
     rooms: [r("antechamber", 2, 6, 4, 3, "antechamber"), r("reliquary", 2, 2, 5, 3, "reliquary"), r("side_vault", 7, 5, 2, 3, "side_vault")],
     corridors: [c(4, 5, 2, 5, "entry_passage"), c(5, 5, 5, 2, "east_link")],
     doors: [d("antechamber", "north"), d("reliquary", "south"), d("side_vault", "west", "corridor", "locked")]
-  }),
-  geomorph({
-    key: "mortuary_chapel_10_a", label: "Mortuary Chapel A", category: "tombs", exits: ["north", "west"], tags: ["chapel", "crypt", "processional"],
+  }, [t(4, 6, "n"), t(4, 4, "s"), t(7, 6, "w", "locked")]),
+  tracedGeomorph({
+    key: "mortuary_chapel_10_a", label: "Mortuary Chapel A", category: "tombs", exits: ["north", "west"], tags: ["series_b", "chapel", "crypt", "processional"],
     sourceNotes: [sources.barrowmaze, sources.arden],
+    sockets: [s("north", 2), s("west", 7)],
+    cellMap: [
+      "##....####",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##....####",
+      "....RRRRR#",
+      "#RRRRRRRR#",
+      "##########",
+    ],
     rooms: [r("chapel", 2, 1, 6, 5, "mortuary_chapel"), r("vestry", 1, 7, 3, 2, "vestry"), r("burial_niche", 6, 7, 3, 2, "burial_niche")],
     corridors: [c(4, 0, 2, 10, "processional_axis"), c(0, 7, 10, 2, "service_crosshall")],
     doors: [d("chapel", "south"), d("vestry", "east"), d("burial_niche", "west")]
-  }),
-  geomorph({
-    key: "ossuary_grid_10_a", label: "Ossuary Grid A", category: "tombs", exits: ["north", "south"], tags: ["ossuary", "grid", "dense"],
+  }, [t(3, 1, "n"), t(4, 5, "s"), t(3, 8, "e"), t(6, 8, "w")]),
+  tracedGeomorph({
+    key: "ossuary_grid_10_a", label: "Ossuary Grid A", category: "tombs", exits: ["north", "south"], tags: ["series_b", "ossuary", "grid", "dense"],
     sourceNotes: [sources.barrowmaze],
+    sockets: [s("north", 2), s("south", 2)],
+    cellMap: [
+      "##....####",
+      "#RRR..RRR#",
+      "#RRR..RRR#",
+      "##......##",
+      "...RRRR...",
+      "...RRRR...",
+      "##......##",
+      "#RRR..RRR#",
+      "#RRR..RRR#",
+      "##....####",
+    ],
     rooms: [r("bone_room_a", 1, 1, 3, 2, "ossuary"), r("bone_room_b", 6, 1, 3, 2, "ossuary"), r("bone_room_c", 1, 7, 3, 2, "ossuary"), r("bone_room_d", 6, 7, 3, 2, "ossuary"), r("bone_pit", 3, 4, 4, 2, "bone_pit")],
     corridors: [c(4, 0, 2, 10, "main_spine"), c(0, 4, 10, 2, "cross_passage")],
     doors: [d("bone_room_a", "east"), d("bone_room_b", "west"), d("bone_room_c", "east"), d("bone_room_d", "west"), d("bone_pit", "north")]
-  }),
-  geomorph({
-    key: "sealed_family_tomb_10_a", label: "Sealed Family Tomb A", category: "tombs", exits: ["west", "south"], tags: ["family_tomb", "secret", "compact"],
+  }, [t(3, 1, "e"), t(6, 1, "w"), t(3, 7, "e"), t(6, 7, "w"), t(4, 4, "n")]),
+  tracedGeomorph({
+    key: "sealed_family_tomb_10_a", label: "Sealed Family Tomb A", category: "tombs", exits: ["west", "south"], tags: ["series_b", "family_tomb", "secret", "compact"],
     sourceNotes: [sources.barrowmaze],
+    sockets: [s("west", 2), s("west", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "##########",
+      "..RRRRRRR#",
+      "..RRRRRRR#",
+      "..RRRRRRR#",
+      "..RRRRR###",
+      "####..####",
+      "..RRRR####",
+      "..RRRR####",
+      "##..###..#",
+    ],
     rooms: [r("family_crypt", 2, 2, 5, 5, "family_crypt"), r("hidden_vault", 7, 2, 2, 3, "hidden_vault"), r("mourning_room", 2, 7, 4, 2, "mourning_room")],
     corridors: [c(0, 4, 4, 2, "entry_hall"), c(4, 5, 2, 5, "south_link")],
     doors: [d("family_crypt", "west"), d("hidden_vault", "west", "family_crypt", "secret"), d("mourning_room", "north")]
-  }),
-  geomorph({
-    key: "sunken_crypt_10_a", label: "Sunken Crypt A", category: "tombs", exits: ["north", "east"], tags: ["sunken", "flooded", "crypt"],
+  }, [t(2, 4, "w"), t(7, 3, "w", "secret"), t(4, 7, "n")]),
+  tracedGeomorph({
+    key: "sunken_crypt_10_a", label: "Sunken Crypt A", category: "tombs", exits: ["north", "east"], tags: ["series_b", "sunken", "flooded", "crypt"],
     sourceNotes: [sources.arden, sources.barrowmaze],
+    sockets: [s("north", 2), s("east", 2), s("east", 7)],
+    cellMap: [
+      "##....####",
+      "##...##RR#",
+      "##RRRRRRR.",
+      "##RRRRRR..",
+      "##RRRRR...",
+      "##RRRRR###",
+      "##RRRRR###",
+      "#RRRRR#...",
+      "#RRRRR#...",
+      "##########",
+    ],
     rooms: [r("sunken_room", 2, 2, 5, 5, "sunken_crypt", ["flooded"]), r("dry_landing", 7, 1, 2, 3, "landing"), r("low_vault", 1, 7, 5, 2, "low_vault")],
     corridors: [c(4, 0, 2, 3, "north_stair"), c(6, 3, 4, 2, "east_outlet"), c(4, 5, 2, 5, "low_passage")],
     doors: [d("sunken_room", "north"), d("dry_landing", "west"), d("low_vault", "east")]
-  }),
-  geomorph({
-    key: "processional_shrine_10_a", label: "Processional Shrine A", category: "religious", exits: ["north", "south"], tags: ["shrine", "axis", "arden"],
+  }, [t(4, 2, "n"), t(7, 2, "w"), t(5, 7, "n")]),
+  tracedGeomorph({
+    key: "processional_shrine_10_a", label: "Processional Shrine A", category: "religious", exits: ["north", "south"], tags: ["series_c", "shrine", "axis", "arden"],
     sourceNotes: [sources.arden, sources.geomorph],
+    sockets: [s("north", 2), s("north", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##..###..#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##..###..#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##.RRRR..#",
+      "##..###..#",
+    ],
     rooms: [r("entry_narthex", 2, 1, 6, 2, "narthex"), r("shrine_hall", 2, 4, 6, 4, "shrine_hall"), r("sanctum", 3, 8, 4, 1, "sanctum")],
     corridors: [c(4, 0, 2, 10, "ceremonial_axis")],
     doors: [d("entry_narthex", "south"), d("shrine_hall", "north"), d("sanctum", "north")]
-  }),
-  geomorph({
-    key: "idol_chamber_10_a", label: "Idol Chamber A", category: "religious", exits: ["west", "east", "south"], tags: ["idol", "side_chapels", "hub"],
+  }, [t(3, 1, "n"), t(7, 1, "n"), t(3, 2, "s"), t(7, 2, "s"), t(3, 4, "n"), t(7, 4, "n"), t(4, 7, "s"), t(4, 8, "n")]),
+  tracedGeomorph({
+    key: "idol_chamber_10_a", label: "Idol Chamber A", category: "religious", exits: ["west", "east", "south"], tags: ["series_c", "idol", "side_chapels", "hub"],
     sourceNotes: [sources.arden],
+    sockets: [s("west", 2), s("west", 7), s("east", 2), s("east", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "##########",
+      "...RRRR...",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      "##..###..#",
+    ],
     rooms: [r("idol_hall", 3, 2, 4, 5, "idol_hall"), r("west_chapel", 1, 3, 2, 3, "side_chapel"), r("east_chapel", 7, 3, 2, 3, "side_chapel"), r("crypt_under_idol", 3, 7, 4, 2, "crypt")],
     corridors: [c(0, 4, 10, 2, "cross_axis"), c(4, 5, 2, 5, "south_descent")],
     doors: [d("idol_hall", "west"), d("west_chapel", "east"), d("east_chapel", "west"), d("crypt_under_idol", "north")]
-  }),
-  geomorph({
-    key: "oracle_suite_10_a", label: "Oracle Suite A", category: "religious", exits: ["east", "south"], tags: ["oracle", "secret", "religious"],
+  }, [t(3, 2, "w"), t(6, 2, "e"), t(3, 4, "w"), t(2, 4, "e"), t(6, 4, "e"), t(7, 4, "w"), t(4, 6, "s"), t(4, 7, "n"), t(3, 7, "w"), t(6, 7, "e"), t(3, 8, "s"), t(6, 8, "e")]),
+  tracedGeomorph({
+    key: "oracle_suite_10_a", label: "Oracle Suite A", category: "religious", exits: ["east", "south"], tags: ["series_c", "oracle", "secret", "religious"],
     sourceNotes: [sources.arden],
+    sockets: [s("east", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "#######RR#",
+      "#######RR#",
+      "#######..#",
+      "#####RRR.#",
+      "#####RRR.#",
+      "#RRRRRRR.#",
+      "#RRRR.....",
+      "#RRRR.....",
+      "##..###..#",
+    ],
     rooms: [r("waiting_room", 1, 6, 4, 3, "waiting_room"), r("oracle_cell", 5, 4, 3, 3, "oracle_cell"), r("hidden_listener", 7, 1, 2, 2, "hidden_listener")],
-    corridors: [c(4, 7, 6, 2, "public_hall"), c(6, 3, 2, 6, "inner_passage")],
+    corridors: [c(4, 7, 6, 2, "public_hall"), c(7, 3, 2, 7, "inner_passage")],
     doors: [d("waiting_room", "east"), d("oracle_cell", "south"), d("hidden_listener", "south", "corridor", "secret")]
-  }),
-  geomorph({
-    key: "cult_vestry_10_a", label: "Cult Vestry A", category: "religious", exits: ["north", "west"], tags: ["cult", "storage", "backstage"],
+  }, [t(4, 7, "e"), t(2, 8, "s"), t(7, 6, "s"), t(7, 2, "s", "secret")]),
+  tracedGeomorph({
+    key: "cult_vestry_10_a", label: "Cult Vestry A", category: "religious", exits: ["north", "west"], tags: ["series_c", "cult", "storage", "backstage"],
     sourceNotes: [sources.arden],
-    rooms: [r("vestment_room", 2, 1, 3, 3, "vestment_room"), r("offering_store", 6, 1, 3, 3, "offering_store"), r("ritual_prep", 2, 5, 6, 3, "ritual_prep")],
+    sockets: [s("north", 2), s("north", 7), s("west", 2), s("west", 7)],
+    cellMap: [
+      "##..###..#",
+      "##RRR#RRR#",
+      "..RRR.RRR#",
+      "..RRR.RRR#",
+      "##..#..###",
+      "........##",
+      "........##",
+      "..RRRRRR##",
+      "##RRRRRR##",
+      "##########",
+    ],
+    rooms: [r("vestment_room", 2, 1, 3, 3, "vestment_room"), r("offering_store", 6, 1, 3, 3, "offering_store"), r("ritual_prep", 2, 5, 6, 4, "ritual_prep")],
     corridors: [c(4, 0, 2, 5, "north_entry"), c(0, 5, 10, 2, "service_hall")],
     doors: [d("vestment_room", "south"), d("offering_store", "south"), d("ritual_prep", "north")]
-  }),
-  geomorph({
-    key: "moon_sun_shrine_10_a", label: "Moon Sun Shrine A", category: "religious", exits: ["west", "east"], tags: ["paired_rooms", "shrine", "ritual"],
+  }, [t(3, 1, "n"), t(7, 1, "n"), t(2, 2, "w"), t(3, 3, "s"), t(6, 3, "s"), t(6, 3, "w"), t(2, 5, "w"), t(5, 5, "n"), t(4, 7, "n")]),
+  tracedGeomorph({
+    key: "moon_sun_shrine_10_a", label: "Moon Sun Shrine A", category: "religious", exits: ["west", "east"], tags: ["series_c", "paired_rooms", "shrine", "ritual"],
     sourceNotes: [sources.arden],
+    sockets: [s("west", 2), s("west", 7), s("east", 2), s("east", 7)],
+    cellMap: [
+      "##########",
+      "##########",
+      ".RRR..RRR.",
+      ".RRR..RRR.",
+      ".RRRRRRRR.",
+      ".RRRRRRRR.",
+      ".RRR..RRR.",
+      ".RRR..RRR.",
+      "##########",
+      "##########",
+    ],
     rooms: [r("moon_room", 1, 2, 3, 5, "moon_shrine"), r("sun_room", 6, 2, 3, 5, "sun_shrine"), r("middle_altar", 3, 4, 4, 2, "shared_altar")],
     corridors: [c(0, 4, 10, 2, "east_west_axis")],
     doors: [d("moon_room", "east"), d("sun_room", "west"), d("middle_altar", "north")]
-  }),
-  geomorph({
-    key: "ritual_octagon_20_a", label: "Ritual Octagon A", size: 20, category: "religious", exits: ["north", "east", "south", "west"], tags: ["set_piece", "ritual", "arden"],
+  }, [t(1, 2, "w"), t(8, 2, "e"), t(3, 2, "e"), t(6, 2, "w"), t(3, 3, "e"), t(6, 3, "w"), t(3, 4, "e"), t(6, 4, "w"), t(4, 4, "n"), t(2, 6, "s"), t(7, 6, "s")]),
+  tracedGeomorph({
+    key: "ritual_octagon_20_a", label: "Ritual Octagon A", size: 20, category: "religious", exits: ["north", "east", "south", "west"], tags: ["series_c", "set_piece", "ritual", "arden"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 7), s("north", 12), s("east", 7), s("east", 12), s("south", 7), s("south", 12), s("west", 7), s("west", 12)],
+    cellMap: [
+      "#######..###..######",
+      "#######..###..######",
+      "#######.RRRR..######",
+      "#######.RRRR..######",
+      "#######.RRRR..######",
+      "#######......#######",
+      "######RRRRRRRR######",
+      ".......RRRRRRR......",
+      ".......RRRRRRRRRR###",
+      "##RRR.RRRRRRRRRRR###",
+      "##RRR.RRRRRRRRRRR###",
+      "##RRR.RRRRRRRRRRR###",
+      ".......RRRRRRRR.....",
+      ".......RRRRRRR......",
+      "#######......#######",
+      "#######.RRRR.#######",
+      "#######.RRRR.#######",
+      "#######.RRRR.#######",
+      "#######..###..######",
+      "#######..###..######",
+    ],
     rooms: [r("ritual_hall", 6, 6, 8, 8, "ritual_octagon"), r("north_vestry", 8, 2, 4, 3, "vestry"), r("east_font", 15, 8, 3, 4, "font_room"), r("south_reliquary", 8, 15, 4, 3, "reliquary"), r("west_cells", 2, 8, 3, 4, "penitent_cells")],
     corridors: [c(9, 0, 2, 20, "north_south_axis"), c(0, 9, 20, 2, "east_west_axis")],
     doors: [d("ritual_hall", "north"), d("ritual_hall", "east"), d("ritual_hall", "south"), d("ritual_hall", "west"), d("north_vestry", "south"), d("east_font", "west"), d("south_reliquary", "north"), d("west_cells", "east")]
-  }),
-  geomorph({
-    key: "columned_hall_20_a", label: "Columned Hall A", size: 20, category: "architectural", exits: ["north", "east", "south", "west"], tags: ["set_piece", "columns", "arden"],
+  }, [t(7, 6, "n"), t(12, 6, "n"), t(13, 7, "e"), t(13, 12, "e"), t(7, 13, "s"), t(12, 13, "s"), t(6, 7, "w"), t(6, 12, "w"), t(9, 4, "s"), t(15, 9, "w"), t(9, 15, "n"), t(4, 9, "e")]),
+  tracedGeomorph({
+    key: "columned_hall_20_a", label: "Columned Hall A", size: 20, category: "architectural", exits: ["north", "east", "south", "west"], tags: ["series_c", "set_piece", "columns", "arden"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 7), s("north", 12), s("east", 7), s("east", 12), s("south", 7), s("south", 12), s("west", 7), s("west", 12)],
+    cellMap: [
+      "#######..###..######",
+      "######RRRRRRRR######",
+      "######RRRRRRRR######",
+      "#######......#######",
+      "###RRRRRRRRRRRRRR###",
+      "###RRRRRRRRRRRRRR###",
+      "###RRRRRRRRRRRRRR###",
+      "...RRRRRRRRRRRRRR...",
+      "...RRRRRRRRRRRRRR...",
+      "...RRRRRRRRRRRRRR...",
+      "...RRRRRRRRRRRRRR...",
+      "###RRRRRRRRRRRRRR###",
+      "...RRRRRRRRRRRRRR...",
+      "...RRRRRRRRRRRRRR...",
+      "#######......#######",
+      "######RRRRRRRR######",
+      "######RRRRRRRR######",
+      "######RRRRRRRR######",
+      "#######..###..######",
+      "#######..###..######",
+    ],
     rooms: [r("column_hall", 3, 4, 14, 10, "columned_hall"), r("north_balcony", 6, 1, 8, 2, "balcony"), r("south_annex", 6, 15, 8, 3, "annex")],
     corridors: [c(9, 0, 2, 20, "central_axis"), c(0, 8, 20, 3, "transverse_hall")],
     doors: [d("column_hall", "north"), d("column_hall", "south"), d("north_balcony", "south"), d("south_annex", "north")]
-  }),
-  geomorph({
-    key: "audience_hall_20_a", label: "Audience Hall A", size: 20, category: "architectural", exits: ["west", "east", "south"], tags: ["set_piece", "throne", "arden"],
+  }, [t(7, 1, "n"), t(12, 1, "n"), t(7, 4, "n"), t(12, 4, "n"), t(3, 7, "w"), t(3, 12, "w"), t(16, 7, "e"), t(16, 12, "e"), t(7, 13, "s"), t(12, 13, "s"), t(9, 2, "s"), t(7, 15, "n"), t(12, 15, "n")]),
+  tracedGeomorph({
+    key: "audience_hall_20_a", label: "Audience Hall A", size: 20, category: "architectural", exits: ["west", "east", "south"], tags: ["series_c", "set_piece", "throne", "arden"],
     sourceNotes: [sources.arden],
+    sockets: [s("west", 7), s("west", 12), s("east", 7), s("east", 12), s("south", 7), s("south", 12)],
+    cellMap: [
+      "####################",
+      "####################",
+      "####################",
+      "####################",
+      "####################",
+      "###RRRRRRRRRRRR#####",
+      "###RRRRRRRRRRRR#####",
+      "...RRRRRRRRRRRRRRR..",
+      "...RRRRRRRRRRRRRRR..",
+      "###RRRRRRRRRRRRRRR##",
+      "###RRRRRRRRRRRRRRR##",
+      "###RRRRRRRRRRRR#####",
+      "...RRRRRRRRRRRR.....",
+      "#####..####..#######",
+      "##RRR..##RRRR#######",
+      "##RRR..##RRRR#######",
+      "##RRR..##RRRR#######",
+      "##RRR..##RRRR#######",
+      "#######..##..#######",
+      "#######..##..#######",
+    ],
     rooms: [r("audience_hall", 3, 5, 12, 8, "audience_hall"), r("dais", 15, 7, 3, 4, "dais"), r("guardroom", 2, 14, 5, 4, "guardroom"), r("records", 9, 14, 5, 4, "records_room")],
     corridors: [c(0, 8, 20, 2, "processional_hall"), c(5, 12, 2, 8, "south_service"), c(11, 12, 2, 8, "south_service")],
     doors: [d("audience_hall", "east"), d("dais", "west"), d("guardroom", "north"), d("records", "north")]
-  }),
-  geomorph({
-    key: "forum_segment_20_a", label: "Forum Segment A", size: 20, category: "architectural", exits: ["north", "east", "west"], tags: ["open_hall", "market", "arden"],
+  }, [t(3, 7, "w"), t(3, 12, "w"), t(14, 8, "e"), t(15, 8, "w"), t(5, 12, "s"), t(11, 12, "s"), t(5, 14, "n"), t(11, 14, "n")]),
+  tracedGeomorph({
+    key: "forum_segment_20_a", label: "Forum Segment A", size: 20, category: "architectural", exits: ["north", "east", "west"], tags: ["series_c", "open_hall", "market", "arden"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 7), s("east", 7), s("west", 7), s("west", 12)],
+    cellMap: [
+      "#######..###########",
+      "###RRRRRRRRRR#######",
+      "###RRRRRRRRRR#######",
+      "#######..###########",
+      "####RRRRRRRRRR######",
+      "####RRRRRRRRRR######",
+      "#RR.RRRRRRRRRR.RRR##",
+      "....RRRRRRRRRR.RRR..",
+      "....RRRRRRRRRR.RRR..",
+      "#RR.RRRRRRRRRR.RRR##",
+      "#RR.RRRRRRRRRR######",
+      "####RRRRRRRRRR######",
+      ".............#######",
+      "#######RRRR..#######",
+      "#######RRRR..#######",
+      "#######RRRR..#######",
+      "####################",
+      "####################",
+      "####################",
+      "####################",
+    ],
     rooms: [r("forum_floor", 4, 4, 10, 8, "forum"), r("stall_row_north", 3, 1, 12, 2, "market_stalls"), r("office_west", 1, 6, 2, 4, "office"), r("office_east", 15, 6, 3, 4, "office"), r("counting_room", 7, 13, 4, 3, "counting_room")],
-    corridors: [c(0, 8, 20, 2, "east_west_street"), c(9, 0, 2, 12, "north_entry")],
+    corridors: [c(0, 7, 20, 2, "east_west_street"), c(7, 0, 2, 13, "north_entry"), c(7, 12, 6, 2, "counting_room_link")],
     doors: [d("forum_floor", "north"), d("forum_floor", "west"), d("forum_floor", "east"), d("counting_room", "north")]
-  }),
-  geomorph({
-    key: "barracks_block_10_a", label: "Barracks Block A", category: "living", exits: ["west", "east"], tags: ["barracks", "dense", "living"],
+  }, [t(7, 1, "n"), t(7, 2, "s"), t(7, 4, "n"), t(4, 7, "w"), t(13, 7, "e"), t(2, 7, "e"), t(15, 7, "w"), t(8, 13, "n")]),
+  tracedGeomorph({
+    key: "barracks_block_10_a", label: "Barracks Block A", category: "living", exits: ["west", "east"], tags: ["series_c", "barracks", "dense", "living"],
     sourceNotes: [sources.arden, sources.barrowmaze],
+    sockets: [s("west", 2), s("west", 7), s("east", 2), s("east", 7)],
+    cellMap: [
+      "##########",
+      "#RRRRRRRR#",
+      ".RRRRRRRR.",
+      ".RR....RR.",
+      "....RR....",
+      "....RR....",
+      ".RR....RR.",
+      ".RRRRRRRR.",
+      "#RRRRRRRR#",
+      "##########",
+    ],
     rooms: [r("north_bunks", 1, 1, 8, 2, "bunks"), r("south_bunks", 1, 7, 8, 2, "bunks"), r("armory_niche", 4, 4, 2, 2, "armory_niche")],
     corridors: [c(0, 4, 10, 2, "central_hall"), c(2, 3, 2, 4, "west_bunk_link"), c(6, 3, 2, 4, "east_bunk_link")],
     doors: [d("north_bunks", "south"), d("south_bunks", "north"), d("armory_niche", "west")]
-  }),
-  geomorph({
-    key: "guard_post_10_a", label: "Guard Post A", category: "military", exits: ["north", "south", "east"], tags: ["guard", "checkpoint", "living"],
+  }, [t(4, 2, "s"), t(4, 7, "n"), t(4, 4, "w")]),
+  tracedGeomorph({
+    key: "guard_post_10_a", label: "Guard Post A", category: "military", exits: ["north", "south", "east"], tags: ["series_d", "guard", "checkpoint", "living"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 2), s("north", 7), s("east", 2), s("east", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..#RRR##",
+      "##RR.RRR..",
+      "##RR.RRR##",
+      "##RR....##",
+      "##RR....##",
+      "##...RRR##",
+      "##...RRR..",
+      "##...RRR##",
+      "##..###..#",
+    ],
     rooms: [r("watch_room", 1, 2, 3, 4, "watch_room"), r("ready_room", 5, 1, 4, 3, "ready_room"), r("cells", 5, 6, 4, 3, "holding_cells")],
     corridors: [c(4, 0, 2, 10, "guarded_passage"), c(4, 4, 6, 2, "east_sally")],
     doors: [d("watch_room", "east"), d("ready_room", "south"), d("cells", "north", "corridor", "locked")]
-  }),
-  geomorph({
-    key: "mess_hall_10_a", label: "Mess Hall A", category: "living", exits: ["west", "south"], tags: ["mess", "service", "living"],
+  }, [t(2, 2, "n"), t(3, 4, "e"), t(5, 2, "w"), t(6, 3, "s"), t(5, 7, "w", "locked"), t(7, 7, "e", "locked")]),
+  tracedGeomorph({
+    key: "mess_hall_10_a", label: "Mess Hall A", category: "living", exits: ["west", "south"], tags: ["series_d", "mess", "service", "living"],
     sourceNotes: [sources.arden],
-    rooms: [r("mess", 1, 1, 7, 4, "mess_hall"), r("kitchen", 1, 6, 4, 3, "kitchen"), r("pantry", 6, 6, 2, 3, "pantry")],
+    sockets: [s("west", 2), s("west", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "#RRRRRRR##",
+      ".RRRRRRR##",
+      "#RRRRRRR##",
+      ".........#",
+      ".........#",
+      "#RRR..RRR#",
+      ".RRR..RRR#",
+      "#RRR..RRR#",
+      "##..###..#",
+    ],
+    rooms: [r("mess", 1, 1, 7, 3, "mess_hall"), r("kitchen", 1, 6, 3, 3, "kitchen"), r("pantry", 6, 6, 3, 3, "pantry")],
     corridors: [c(0, 4, 9, 2, "entry_hall"), c(4, 5, 2, 5, "service_hall")],
     doors: [d("mess", "south"), d("kitchen", "north"), d("pantry", "west")]
-  }),
-  geomorph({
-    key: "bedroom_suite_10_a", label: "Bedroom Suite A", category: "living", exits: ["north", "east"], tags: ["bedrooms", "suite", "living"],
+  }, [t(1, 2, "w"), t(4, 3, "s"), t(3, 6, "n"), t(6, 7, "w"), t(7, 8, "s")]),
+  tracedGeomorph({
+    key: "bedroom_suite_10_a", label: "Bedroom Suite A", category: "living", exits: ["north", "east"], tags: ["series_d", "bedrooms", "suite", "living"],
     sourceNotes: [sources.arden],
-    rooms: [r("main_room", 2, 2, 4, 4, "bedroom"), r("closet", 6, 2, 2, 2, "closet"), r("study", 2, 6, 3, 3, "study"), r("privy", 6, 6, 2, 2, "privy")],
+    sockets: [s("north", 2), s("north", 7), s("east", 2), s("east", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..###..#",
+      "##RRRRRRR.",
+      "##RRRRRRR.",
+      "##RRRR....",
+      "##RRRR....",
+      "##RRR.RRR.",
+      "##RRR.RRR.",
+      "##RRR..###",
+      "##########",
+    ],
+    rooms: [r("main_room", 2, 2, 4, 4, "bedroom"), r("closet", 6, 2, 3, 2, "closet"), r("study", 2, 6, 3, 3, "study"), r("privy", 6, 6, 3, 2, "privy")],
     corridors: [c(4, 0, 2, 3, "north_entry"), c(5, 4, 5, 2, "east_hall"), c(4, 4, 2, 5, "inner_hall")],
     doors: [d("main_room", "north"), d("closet", "west"), d("study", "east"), d("privy", "west")]
-  }),
-  geomorph({
-    key: "library_stacks_10_a", label: "Library Stacks A", category: "knowledge", exits: ["west", "east"], tags: ["library", "stacks", "arden"],
+  }, [t(2, 2, "n"), t(5, 4, "e"), t(6, 3, "s"), t(4, 6, "e"), t(6, 6, "w"), t(8, 2, "e"), t(8, 7, "e")]),
+  tracedGeomorph({
+    key: "library_stacks_10_a", label: "Library Stacks A", category: "knowledge", exits: ["west", "east"], tags: ["series_d", "library", "stacks", "arden"],
     sourceNotes: [sources.arden],
-    rooms: [r("reading_room", 1, 2, 4, 5, "reading_room"), r("stack_room", 6, 1, 3, 7, "stacks"), r("scribe_cell", 2, 7, 3, 2, "scribe_cell")],
+    sockets: [s("west", 2), s("west", 7), s("east", 2), s("east", 7)],
+    cellMap: [
+      "##########",
+      "#####.RRR#",
+      ".RRR..RRR.",
+      ".RRR..RRR#",
+      ".RRR..RRR#",
+      ".RRR..RRR#",
+      "#RRR..RRR#",
+      ".RRR.RRRR.",
+      "##RRR.####",
+      "##########",
+    ],
+    rooms: [r("reading_room", 1, 2, 3, 5, "reading_room"), r("stack_room", 6, 1, 3, 7, "stacks"), r("scribe_cell", 2, 7, 3, 2, "scribe_cell")],
     corridors: [c(0, 4, 10, 2, "library_hall"), c(5, 1, 1, 8, "stack_aisle")],
     doors: [d("reading_room", "east"), d("stack_room", "west"), d("scribe_cell", "north")]
-  }),
-  geomorph({
-    key: "scriptorium_10_a", label: "Scriptorium A", category: "knowledge", exits: ["north", "south"], tags: ["scribe", "records", "quiet"],
+  }, [t(1, 2, "w"), t(3, 4, "e"), t(6, 4, "w"), t(8, 2, "e"), t(8, 7, "e"), t(4, 7, "e")]),
+  tracedGeomorph({
+    key: "scriptorium_10_a", label: "Scriptorium A", category: "knowledge", exits: ["north", "south"], tags: ["series_d", "scribe", "records", "quiet"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 2), s("north", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..###..#",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##RRRRRR##",
+      "##........",
+      "#RRR..RRR#",
+      "#RRR..RRR#",
+      "##..###..#",
+    ],
     rooms: [r("scribe_hall", 2, 2, 6, 4, "scriptorium"), r("ink_room", 1, 7, 3, 2, "ink_room"), r("record_cell", 6, 7, 3, 2, "record_cell")],
     corridors: [c(4, 0, 2, 10, "quiet_axis"), c(0, 7, 10, 2, "archive_link")],
     doors: [d("scribe_hall", "south"), d("ink_room", "east"), d("record_cell", "west")]
-  }),
-  geomorph({
-    key: "forge_workshop_10_a", label: "Forge Workshop A", category: "workshops", exits: ["west", "south"], tags: ["forge", "workshop", "service"],
+  }, [t(2, 2, "n"), t(7, 2, "n"), t(4, 5, "s"), t(3, 7, "e"), t(6, 7, "w"), t(2, 8, "s"), t(7, 8, "s")]),
+  tracedGeomorph({
+    key: "forge_workshop_10_a", label: "Forge Workshop A", category: "workshops", exits: ["west", "south"], tags: ["series_d", "forge", "workshop", "service"],
     sourceNotes: [sources.arden],
+    sockets: [s("west", 2), s("west", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "#RRRRRRRR#",
+      ".RRRRRRRR#",
+      "#RRRRRRRR#",
+      "#RRRRRRRR#",
+      ".........#",
+      "....RRRR##",
+      ".RRR.RRR##",
+      "#RRR.RRR##",
+      "##..###..#",
+    ],
     rooms: [r("forge", 1, 1, 4, 4, "forge"), r("workshop", 5, 1, 4, 5, "workshop"), r("coal_room", 1, 6, 3, 3, "coal_room"), r("tool_room", 5, 7, 3, 2, "tool_room")],
     corridors: [c(0, 5, 10, 2, "service_hall"), c(4, 5, 2, 5, "south_service")],
     doors: [d("forge", "south"), d("workshop", "south"), d("coal_room", "east"), d("tool_room", "north")]
-  }),
-  geomorph({
-    key: "armory_vault_10_a", label: "Armory Vault A", category: "military", exits: ["north", "west"], tags: ["armory", "locked", "storage"],
+  }, [t(4, 2, "e"), t(3, 4, "s"), t(5, 2, "w"), t(6, 5, "s"), t(3, 7, "e"), t(5, 7, "w"), t(7, 8, "s")]),
+  tracedGeomorph({
+    key: "armory_vault_10_a", label: "Armory Vault A", category: "military", exits: ["north", "west"], tags: ["series_d", "armory", "locked", "storage"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 2), s("north", 7), s("west", 2), s("west", 7)],
+    cellMap: [
+      "##..###..#",
+      "##RRRRR.##",
+      "..RRRRR.##",
+      "##RRRRRRR#",
+      "........##",
+      "........##",
+      "##RRRRR###",
+      "..RRRRR###",
+      "##RRRRR###",
+      "##########",
+    ],
     rooms: [r("outer_armory", 2, 1, 5, 4, "armory"), r("locked_vault", 2, 6, 5, 3, "weapon_vault"), r("guard_niche", 7, 3, 2, 3, "guard_niche")],
     corridors: [c(4, 0, 2, 10, "secure_axis"), c(0, 4, 8, 2, "west_checkpoint")],
     doors: [d("outer_armory", "south"), d("locked_vault", "north", "corridor", "locked"), d("guard_niche", "west")]
-  }),
-  geomorph({
-    key: "storehouse_10_a", label: "Storehouse A", category: "workshops", exits: ["east", "south"], tags: ["storage", "crates", "service"],
+  }, [t(2, 1, "n"), t(2, 2, "w"), t(6, 4, "s"), t(2, 7, "w", "locked"), t(4, 6, "n", "locked"), t(7, 4, "w")]),
+  tracedGeomorph({
+    key: "storehouse_10_a", label: "Storehouse A", category: "workshops", exits: ["east", "south"], tags: ["series_d", "storage", "crates", "service"],
     sourceNotes: [sources.arden],
+    sockets: [s("east", 2), s("east", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "#RRRRRR###",
+      "#RRRRRR...",
+      "#RRRRRR###",
+      "#RRRRRR...",
+      "#####.....",
+      "#RRR..RRR#",
+      "#RRR..RRR.",
+      "#RRR..RRR#",
+      "##..###..#",
+    ],
     rooms: [r("bulk_store", 1, 1, 6, 4, "bulk_store"), r("dry_store", 1, 6, 4, 3, "dry_store"), r("locked_store", 6, 6, 3, 3, "locked_store")],
     corridors: [c(6, 4, 4, 2, "east_hall"), c(4, 5, 2, 5, "south_hall")],
     doors: [d("bulk_store", "east"), d("dry_store", "east"), d("locked_store", "west", "corridor", "locked")]
-  }),
-  geomorph({
-    key: "cistern_service_20_a", label: "Cistern Service A", size: 20, category: "infrastructure", exits: ["north", "south", "east"], tags: ["water", "service", "arden"],
+  }, [t(6, 2, "e"), t(5, 4, "s"), t(4, 7, "e"), t(6, 7, "w", "locked"), t(8, 2, "e"), t(8, 7, "e"), t(7, 8, "s")]),
+  tracedGeomorph({
+    key: "cistern_service_20_a", label: "Cistern Service A", size: 20, category: "infrastructure", exits: ["north", "south", "east"], tags: ["series_d", "water", "service", "arden"],
     sourceNotes: [sources.arden],
+    sockets: [s("north", 7), s("north", 12), s("east", 7), s("east", 12), s("south", 7), s("south", 12)],
+    cellMap: [
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######......#######",
+      "#####RRRRRRRR.......",
+      "#####RRRRRRRR.RRRR##",
+      "#RRR.RRRRRRRR.RRRR..",
+      "#RRR.RRRRRRRR.RRRR..",
+      "#RRR.RRRRRRRR.RRRR##",
+      "#RRR.RRRRRRRR......#",
+      "#####RRRRRRRR.......",
+      "#####RRRRRRRR.......",
+      "#######..##..#######",
+      "#####RRRRR...#######",
+      "#####RRRRR...#######",
+      "#####RRRRR...#######",
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######..##..#######",
+    ],
     rooms: [r("cistern", 5, 5, 8, 8, "cistern", ["water"]), r("pump_room", 14, 6, 4, 4, "pump_room"), r("sluice_room", 5, 14, 5, 3, "sluice_room"), r("maintenance", 1, 7, 3, 4, "maintenance")],
     corridors: [c(9, 0, 2, 20, "service_axis"), c(10, 8, 10, 2, "east_channel")],
     doors: [d("cistern", "east"), d("pump_room", "west"), d("sluice_room", "north"), d("maintenance", "east")]
-  }),
-  geomorph({
-    key: "kitchen_service_20_a", label: "Kitchen Service A", size: 20, category: "living", exits: ["west", "east", "south"], tags: ["kitchen", "servants", "arden"],
+  }, [t(7, 5, "n"), t(12, 5, "n"), t(5, 8, "w"), t(12, 8, "e"), t(7, 12, "s"), t(12, 12, "e"), t(14, 8, "w"), t(3, 8, "e"), t(7, 14, "n")]),
+  tracedGeomorph({
+    key: "kitchen_service_20_a", label: "Kitchen Service A", size: 20, category: "living", exits: ["west", "east", "south"], tags: ["series_d", "kitchen", "servants", "arden"],
     sourceNotes: [sources.arden],
-    rooms: [r("great_kitchen", 3, 4, 7, 6, "great_kitchen"), r("servants_hall", 11, 4, 6, 5, "servants_hall"), r("larder", 3, 12, 5, 4, "larder"), r("scullery", 10, 12, 4, 4, "scullery"), r("rear_store", 15, 12, 3, 4, "rear_store")],
+    sockets: [s("west", 7), s("west", 12), s("east", 7), s("east", 12), s("south", 7), s("south", 12)],
+    cellMap: [
+      "####################",
+      "####################",
+      "####################",
+      "####################",
+      "###RRRRRRR.RRRRRR###",
+      "###RRRRRRR.RRRRRR###",
+      "###RRRRRRR.RRRRRR###",
+      "....................",
+      "....................",
+      "#######..##..#######",
+      "#######..##..#######",
+      "###.....##....#...##",
+      "...RRRRR..RRRR.RRR..",
+      "###RRRRR..RRRR.RRR##",
+      "###RRRRR..RRRR.RRR##",
+      "###RRRRR..RRRR.RRR##",
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######..##..#######",
+      "#######..##..#######",
+    ],
+    rooms: [r("great_kitchen", 3, 4, 7, 3, "great_kitchen"), r("servants_hall", 11, 4, 6, 3, "servants_hall"), r("larder", 3, 12, 5, 4, "larder"), r("scullery", 10, 12, 4, 4, "scullery"), r("rear_store", 15, 12, 3, 4, "rear_store")],
     corridors: [c(0, 8, 20, 2, "service_street"), c(8, 9, 2, 11, "south_service")],
     doors: [d("great_kitchen", "east"), d("servants_hall", "west"), d("larder", "north"), d("scullery", "north"), d("rear_store", "north")]
-  }),
+  }, [t(7, 6, "s"), t(11, 6, "s"), t(3, 12, "w"), t(5, 12, "n"), t(7, 12, "e"), t(11, 12, "n"), t(13, 12, "e"), t(15, 12, "w"), t(16, 12, "n"), t(17, 12, "e"), t(7, 15, "s"), t(12, 15, "s")]),
   geomorph({
     key: "ruined_court_20_a", label: "Ruined Court A", size: 20, category: "ruins", exits: ["north", "east", "south", "west"], tags: ["ruined", "open", "arden"],
     sourceNotes: [sources.arden],
     rooms: [r("broken_court", 4, 4, 10, 9, "ruined_court"), r("fallen_gallery", 2, 1, 5, 2, "fallen_gallery"), r("intact_room", 15, 5, 3, 5, "intact_room"), r("sinkhole", 7, 14, 4, 3, "sinkhole")],
-    corridors: [c(0, 8, 20, 2, "broken_axis"), c(9, 0, 2, 20, "cracked_axis")],
-    doors: [d("broken_court", "north"), d("broken_court", "east"), d("broken_court", "south"), d("intact_room", "west")]
+    corridors: [c(0, 7, 20, 2, "broken_axis"), c(7, 0, 2, 20, "cracked_axis"), c(6, 2, 3, 2, "fallen_gallery_link")],
+    doors: [d("broken_court", "north"), d("broken_court", "east"), d("broken_court", "south"), d("fallen_gallery", "east"), d("intact_room", "west")]
   }),
   geomorph({
     key: "cave_intrusion_20_a", label: "Cave Intrusion A", size: 20, category: "cavern", exits: ["west", "east", "south"], tags: ["cave", "built_edge", "transition"],
@@ -1047,7 +1734,7 @@ const NORMAL_GEOMORPHS = [
     key: "ziggurat_approach_20_a", label: "Ziggurat Approach A", size: 20, category: "religious", exits: ["south", "east", "west"], tags: ["processional", "stairs", "set_piece"],
     sourceNotes: [sources.arden],
     rooms: [r("lower_hall", 2, 13, 16, 4, "lower_hall"), r("stairway", 7, 7, 6, 6, "wide_stairs"), r("upper_landing", 5, 3, 10, 3, "upper_landing"), r("side_chamber_w", 1, 7, 4, 3, "side_chamber"), r("side_chamber_e", 15, 7, 4, 3, "side_chamber")],
-    corridors: [c(0, 14, 20, 2, "lower_processional"), c(9, 0, 2, 20, "center_axis")],
+    corridors: [c(0, 7, 20, 2, "cross_processional"), c(12, 0, 2, 20, "center_axis")],
     doors: [d("lower_hall", "north"), d("stairway", "north"), d("upper_landing", "south"), d("side_chamber_w", "east"), d("side_chamber_e", "west")]
   }),
   geomorph({
@@ -1245,6 +1932,79 @@ const NORMAL_GEOMORPHS = [
     rooms: [r("common_room", 5, 5, 7, 5, "common_room"), r("bedroom_a", 2, 2, 4, 3, "bedroom"), r("bedroom_b", 13, 2, 4, 3, "bedroom"), r("kitchen", 2, 13, 5, 4, "kitchen"), r("private_room", 12, 13, 5, 4, "private_room")],
     corridors: [c(0, 14, 20, 2, "service_hall"), c(14, 4, 6, 2, "east_entry"), c(14, 4, 2, 12, "east_service")],
     doors: [d("common_room", "south"), d("bedroom_a", "south"), d("bedroom_b", "south"), d("kitchen", "north"), d("private_room", "north")]
+  })
+];
+
+const BLUEPRINT_GEOMORPHS = [
+  geomorph({
+    key: "blueprint_cross_court_10_a", label: "Blueprint Cross Court A", category: "architectural", exits: ["north", "east", "south", "west"], sockets: [s("north", 2), s("north", 7), s("east", 2), s("east", 7), s("south", 2), s("south", 7), s("west", 2), s("west", 7)], weight: 24,
+    tags: ["blueprint", "structured", "symmetrical", "court", "generic"],
+    rooms: [r("central_court", 3, 3, 4, 4, "central_court")],
+    corridors: [c(2, 0, 2, 10, "west_vertical_axis"), c(7, 0, 2, 10, "east_vertical_axis"), c(0, 2, 10, 2, "north_horizontal_axis"), c(0, 7, 10, 2, "south_horizontal_axis")],
+    doors: [d("central_court", "north", "corridor", "open_chamber"), d("central_court", "south", "corridor", "open_chamber")]
+  }),
+  geomorph({
+    key: "blueprint_great_hall_10_a", label: "Blueprint Great Hall A", category: "architectural", exits: ["east", "west"], sockets: [s("east", 2), s("east", 7), s("west", 2), s("west", 7)], weight: 22,
+    tags: ["blueprint", "structured", "great_hall", "generic"],
+    rooms: [r("great_hall", 2, 1, 6, 8, "great_hall"), r("center_feature", 4, 3, 2, 4, "center_feature")],
+    corridors: [c(0, 2, 10, 2, "north_entry_hall"), c(0, 7, 10, 2, "south_entry_hall")],
+    doors: [d("great_hall", "west", "corridor", "open_chamber"), d("great_hall", "east", "corridor", "open_chamber"), d("center_feature", "west", "great_hall", "open_chamber")]
+  }),
+  geomorph({
+    key: "blueprint_four_cells_10_a", label: "Blueprint Four Cells A", category: "living", exits: ["north", "east", "south", "west"], sockets: [s("north", 2), s("east", 7), s("south", 7), s("west", 2)], weight: 24,
+    tags: ["blueprint", "structured", "cells", "living", "generic"],
+    rooms: [r("cell_nw", 1, 1, 3, 3, "cell"), r("cell_ne", 6, 1, 3, 3, "cell"), r("cell_sw", 1, 6, 3, 3, "cell"), r("cell_se", 6, 6, 3, 3, "cell")],
+    corridors: [c(4, 0, 2, 10, "central_vertical"), c(0, 4, 10, 2, "central_horizontal")],
+    doors: [d("cell_nw", "east"), d("cell_ne", "west"), d("cell_sw", "east"), d("cell_se", "west")]
+  }),
+  geomorph({
+    key: "blueprint_cell_rows_10_a", label: "Blueprint Cell Rows A", category: "living", exits: ["east", "west"], sockets: [s("east", 2), s("east", 7), s("west", 2), s("west", 7)], weight: 24,
+    tags: ["blueprint", "structured", "cell_rows", "barracks", "prison", "generic"],
+    rooms: [r("north_a", 1, 1, 2, 2, "cell"), r("north_b", 3, 1, 2, 2, "cell"), r("north_c", 5, 1, 2, 2, "cell"), r("north_d", 7, 1, 2, 2, "cell"), r("south_a", 1, 7, 2, 2, "cell"), r("south_b", 3, 7, 2, 2, "cell"), r("south_c", 5, 7, 2, 2, "cell"), r("south_d", 7, 7, 2, 2, "cell")],
+    corridors: [c(0, 4, 10, 2, "middle_hall")],
+    doors: [d("north_a", "south"), d("north_b", "south"), d("north_c", "south"), d("north_d", "south"), d("south_a", "north"), d("south_b", "north"), d("south_c", "north"), d("south_d", "north")]
+  }),
+  geomorph({
+    key: "blueprint_double_vault_10_a", label: "Blueprint Double Vault A", category: "tombs", exits: ["north", "south"], sockets: [s("north", 2), s("north", 7), s("south", 2), s("south", 7)], weight: 22,
+    tags: ["blueprint", "structured", "vaults", "barrow", "tomb"],
+    rooms: [r("north_vault", 2, 1, 4, 3, "vault"), r("south_vault", 2, 6, 4, 3, "vault"), r("east_shaft", 6, 3, 2, 4, "shaft")],
+    corridors: [c(2, 0, 2, 10, "west_axis"), c(7, 0, 2, 10, "east_axis")],
+    doors: [d("north_vault", "east"), d("south_vault", "east"), d("east_shaft", "west")]
+  }),
+  geomorph({
+    key: "blueprint_nested_chamber_10_a", label: "Blueprint Nested Chamber A", category: "tombs", exits: ["north", "east", "south", "west"], sockets: [s("north", 2), s("east", 7), s("south", 7), s("west", 2)], weight: 21,
+    tags: ["blueprint", "structured", "nested", "tomb", "vault"],
+    rooms: [r("outer_chamber", 1, 1, 8, 8, "outer_chamber"), r("inner_vault", 3, 3, 4, 4, "inner_vault")],
+    corridors: [c(2, 0, 2, 2, "north_entry"), c(8, 7, 2, 2, "east_entry"), c(7, 8, 2, 2, "south_entry"), c(0, 2, 2, 2, "west_entry")],
+    doors: [d("outer_chamber", "north"), d("outer_chamber", "east"), d("outer_chamber", "south"), d("outer_chamber", "west"), d("inner_vault", "north", "outer_chamber", "locked")]
+  }),
+  geomorph({
+    key: "blueprint_curved_cavern_10_a", label: "Blueprint Curved Cavern A", category: "cavern", exits: ["north", "east", "south", "west"], sockets: [s("north", 2), s("east", 7), s("south", 7), s("west", 2)], weight: 18,
+    tags: ["blueprint", "structured", "curved", "cavern", "organic", "generic"],
+    rooms: [r("main_cave", 2, 2, 6, 5, "curved_cavern", ["open_chamber", "curved"]), r("side_pool", 5, 7, 3, 2, "side_pool", ["water", "curved"])],
+    corridors: [c(2, 0, 2, 4, "north_crack"), c(7, 5, 3, 2, "east_crack"), c(7, 7, 2, 3, "south_crack"), c(0, 2, 4, 2, "west_crack")],
+    doors: [d("main_cave", "north", "corridor", "open_chamber"), d("main_cave", "east", "corridor", "open_chamber"), d("side_pool", "north", "main_cave", "open_chamber")]
+  }),
+  geomorph({
+    key: "blueprint_lava_fissure_10_a", label: "Blueprint Lava Fissure A", category: "hazard", exits: ["east", "west"], sockets: [s("east", 2), s("east", 7), s("west", 2), s("west", 7)], weight: 16,
+    tags: ["blueprint", "structured", "lava", "hazard", "elemental"],
+    rooms: [r("north_platform", 2, 1, 6, 3, "platform"), r("south_platform", 2, 6, 6, 3, "platform"), r("lava_fissure", 4, 4, 2, 2, "lava_fissure", ["lava"])],
+    corridors: [c(0, 2, 10, 2, "north_crossing"), c(0, 7, 10, 2, "south_crossing"), c(4, 3, 2, 5, "bridge")],
+    doors: [d("north_platform", "south", "corridor", "open_chamber"), d("south_platform", "north", "corridor", "open_chamber")]
+  }),
+  geomorph({
+    key: "blueprint_20_quadrant_suite_a", label: "Blueprint Quadrant Suite A", size: 20, category: "architectural", exits: ["north", "east", "south", "west"], sockets: [s("north", 2), s("north", 7), s("north", 12), s("north", 17), s("east", 2), s("east", 7), s("east", 12), s("east", 17), s("south", 2), s("south", 7), s("south", 12), s("south", 17), s("west", 2), s("west", 7), s("west", 12), s("west", 17)], weight: 26,
+    tags: ["blueprint", "structured", "quadrant", "district_core", "generic"],
+    rooms: [r("nw_suite", 2, 2, 5, 5, "suite"), r("ne_suite", 13, 2, 5, 5, "suite"), r("sw_suite", 2, 13, 5, 5, "suite"), r("se_suite", 13, 13, 5, 5, "suite"), r("central_hall", 8, 8, 4, 4, "central_hall")],
+    corridors: [c(9, 0, 2, 20, "vertical_spine"), c(0, 9, 20, 2, "horizontal_spine")],
+    doors: [d("nw_suite", "east"), d("ne_suite", "west"), d("sw_suite", "east"), d("se_suite", "west"), d("central_hall", "north"), d("central_hall", "east"), d("central_hall", "south"), d("central_hall", "west")]
+  }),
+  geomorph({
+    key: "blueprint_20_ordered_halls_a", label: "Blueprint Ordered Halls A", size: 20, category: "living", exits: ["east", "west"], sockets: [s("east", 2), s("east", 7), s("east", 12), s("east", 17), s("west", 2), s("west", 7), s("west", 12), s("west", 17)], weight: 24,
+    tags: ["blueprint", "structured", "rows", "living", "barracks", "prison"],
+    rooms: [r("north_row_a", 1, 1, 4, 3, "quarters"), r("north_row_b", 5, 1, 4, 3, "quarters"), r("north_row_c", 11, 1, 4, 3, "quarters"), r("north_row_d", 15, 1, 4, 3, "quarters"), r("middle_row_a", 1, 8, 8, 3, "hall_room"), r("middle_row_b", 11, 8, 8, 3, "hall_room"), r("south_row_a", 1, 15, 4, 3, "quarters"), r("south_row_b", 5, 15, 4, 3, "quarters"), r("south_row_c", 11, 15, 4, 3, "quarters"), r("south_row_d", 15, 15, 4, 3, "quarters")],
+    corridors: [c(0, 5, 20, 2, "north_row_hall"), c(0, 12, 20, 2, "south_row_hall"), c(9, 5, 2, 9, "center_link")],
+    doors: [d("north_row_a", "south"), d("north_row_b", "south"), d("north_row_c", "south"), d("north_row_d", "south"), d("middle_row_a", "north"), d("middle_row_b", "north"), d("south_row_a", "north"), d("south_row_b", "north"), d("south_row_c", "north"), d("south_row_d", "north")]
   })
 ];
 
@@ -1472,7 +2232,7 @@ const THEME_GEOMORPHS = [
   })
 ];
 
-const CONNECTOR_GEOMORPHS = [
+const LEGACY_ROOM_CONNECTOR_GEOMORPHS = [
   geomorph({ key: "straight_side_room_10_a", label: "Straight Side Room A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["side_room", "short"], rooms: [r("side_room", 4, 1, 3, 3, "side_room")], corridors: [c(0, 5, 10, 2, "main_connector"), c(5, 3, 2, 3, "side_access")], doors: [d("side_room", "south")] }),
   geomorph({ key: "straight_side_room_10_b", label: "Straight Side Room B", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["side_room", "offset"], rooms: [r("guard_room", 1, 1, 3, 3, "guard_room"), r("store", 6, 7, 3, 2, "store")], corridors: [c(0, 5, 10, 2, "main_connector"), c(2, 3, 2, 3, "north_access"), c(7, 5, 2, 4, "south_access")], doors: [d("guard_room", "south"), d("store", "north")] }),
   geomorph({ key: "dogleg_connector_10_a", label: "Dogleg Connector A", kind: "connector", category: "connector", exits: ["north", "east"], tags: ["dogleg"], rooms: [r("alcove", 1, 6, 3, 2, "alcove")], corridors: [c(4, 0, 2, 6, "north_leg"), c(4, 4, 6, 2, "east_leg"), c(2, 5, 3, 2, "side_link")], doors: [d("alcove", "east")] }),
@@ -1499,13 +2259,231 @@ const CONNECTOR_GEOMORPHS = [
   geomorph({ key: "secret_loop_connector_20_a", label: "Secret Loop Connector A", size: 20, kind: "connector", category: "connector", exits: ["west", "east"], tags: ["secret", "loop"], rooms: [r("public_room", 3, 6, 5, 4, "public_room"), r("hidden_cache", 11, 3, 4, 3, "hidden_cache"), r("ambush_room", 12, 12, 4, 4, "ambush_room")], corridors: [c(0, 8, 20, 2, "public_hall"), c(8, 4, 6, 2, "secret_upper"), c(13, 5, 2, 9, "secret_drop"), c(8, 13, 6, 2, "secret_lower")], doors: [d("public_room", "east"), d("hidden_cache", "south", "corridor", "secret"), d("ambush_room", "west", "corridor", "secret")] })
 ];
 
-const STANDARD_GEOMORPH_LIBRARY = [...NORMAL_GEOMORPHS, ...THEME_GEOMORPHS, ...CONNECTOR_GEOMORPHS];
+const PASSAGE_CONNECTOR_GEOMORPHS = [
+  geomorph({ key: "passage_straight_10_a", label: "Passage Straight A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "straight"], rooms: [], corridors: [c(0, 2, 10, 2, "straight_passage")] }),
+  geomorph({ key: "passage_straight_10_b", label: "Passage Straight B", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "straight", "offset"], rooms: [], corridors: [c(0, 7, 10, 2, "straight_passage")] }),
+  geomorph({ key: "passage_vertical_10_a", label: "Passage Vertical A", kind: "connector", category: "connector", exits: ["north", "south"], tags: ["passage", "straight"], rooms: [], corridors: [c(2, 0, 2, 10, "straight_passage")] }),
+  geomorph({ key: "passage_vertical_10_b", label: "Passage Vertical B", kind: "connector", category: "connector", exits: ["north", "south"], tags: ["passage", "straight", "offset"], rooms: [], corridors: [c(7, 0, 2, 10, "straight_passage")] }),
+  geomorph({ key: "passage_bend_ne_10_a", label: "Passage Bend NE A", kind: "connector", category: "connector", exits: ["north", "east"], tags: ["passage", "bend"], rooms: [], corridors: [c(2, 0, 2, 4, "north_leg"), c(2, 2, 8, 2, "east_leg")] }),
+  geomorph({ key: "passage_bend_es_10_a", label: "Passage Bend ES A", kind: "connector", category: "connector", exits: ["east", "south"], tags: ["passage", "bend"], rooms: [], corridors: [c(7, 2, 2, 8, "south_leg"), c(7, 2, 3, 2, "east_leg")] }),
+  geomorph({ key: "passage_bend_sw_10_a", label: "Passage Bend SW A", kind: "connector", category: "connector", exits: ["south", "west"], tags: ["passage", "bend"], rooms: [], corridors: [c(7, 7, 2, 3, "south_leg"), c(0, 7, 9, 2, "west_leg")] }),
+  geomorph({ key: "passage_bend_wn_10_a", label: "Passage Bend WN A", kind: "connector", category: "connector", exits: ["west", "north"], tags: ["passage", "bend"], rooms: [], corridors: [c(2, 0, 2, 4, "north_leg"), c(0, 2, 4, 2, "west_leg")] }),
+  geomorph({ key: "passage_tee_nwe_10_a", label: "Passage Tee NWE A", kind: "connector", category: "connector", exits: ["north", "west", "east"], tags: ["passage", "tee"], rooms: [], corridors: [c(2, 0, 2, 4, "north_leg"), c(0, 2, 10, 2, "cross_passage")] }),
+  geomorph({ key: "passage_tee_wes_10_a", label: "Passage Tee WES A", kind: "connector", category: "connector", exits: ["west", "east", "south"], tags: ["passage", "tee"], rooms: [], corridors: [c(0, 7, 10, 2, "cross_passage"), c(7, 7, 2, 3, "south_leg")] }),
+  geomorph({ key: "passage_cross_10_a", label: "Passage Cross A", kind: "connector", category: "connector", exits: ["north", "east", "south", "west"], tags: ["passage", "cross"], rooms: [], corridors: [c(2, 0, 2, 10, "north_south"), c(0, 2, 10, 2, "east_west")] }),
+  geomorph({ key: "passage_cross_10_b", label: "Passage Cross B", kind: "connector", category: "connector", exits: ["north", "east", "south", "west"], tags: ["passage", "cross", "offset"], rooms: [], corridors: [c(7, 0, 2, 10, "north_south"), c(0, 7, 10, 2, "east_west")] }),
+  geomorph({ key: "passage_bridge_10_a", label: "Passage Bridge A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "bridge", "hazard"], rooms: [], corridors: [c(0, 2, 3, 2, "west_landing"), c(3, 2, 4, 2, "bridge"), c(7, 2, 3, 2, "east_landing")] }),
+  geomorph({ key: "passage_gate_10_a", label: "Passage Gate A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "gate", "locked"], rooms: [], corridors: [c(0, 7, 10, 2, "gated_passage")], doors: [] }),
+  geomorph({ key: "passage_collapsed_10_a", label: "Passage Collapsed A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "collapsed", "rubble"], rooms: [], corridors: [c(0, 2, 4, 2, "west_approach"), c(3, 2, 4, 2, "rubble_choke"), c(6, 2, 4, 2, "east_approach")] }),
+  geomorph({ key: "passage_dead_end_10_a", label: "Passage Dead End A", kind: "connector", category: "connector", exits: ["west"], tags: ["passage", "dead_end"], rooms: [], corridors: [c(0, 7, 7, 2, "dead_end_passage")] }),
+  geomorph({ key: "passage_stair_link_10_a", label: "Passage Stair Link A", kind: "connector", category: "connector", exits: ["north", "south"], tags: ["passage", "stairs", "vertical"], rooms: [], corridors: [c(7, 0, 2, 10, "stair_axis")] }),
+  geomorph({ key: "passage_double_lane_10_a", label: "Passage Double Lane A", kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "parallel"], rooms: [], corridors: [c(0, 2, 10, 2, "north_lane"), c(0, 7, 10, 2, "south_lane"), c(2, 2, 2, 7, "west_link"), c(7, 2, 2, 7, "east_link")] }),
+  geomorph({ key: "passage_gallery_20_a", label: "Passage Gallery A", size: 20, kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "gallery"], rooms: [], corridors: [c(0, 7, 20, 2, "gallery_passage"), c(2, 12, 16, 2, "lower_gallery"), c(7, 7, 2, 7, "west_link"), c(12, 7, 2, 7, "east_link")] }),
+  geomorph({ key: "passage_plaza_cross_20_a", label: "Passage Plaza Cross A", size: 20, kind: "connector", category: "connector", exits: ["north", "east", "south", "west"], tags: ["passage", "cross", "plaza"], rooms: [], corridors: [c(7, 0, 2, 20, "north_south"), c(0, 7, 20, 2, "east_west"), c(7, 7, 6, 6, "crossing_plaza")] }),
+  geomorph({ key: "passage_offset_20_a", label: "Passage Offset A", size: 20, kind: "connector", category: "connector", exits: ["north", "east", "south"], tags: ["passage", "offset", "bend"], rooms: [], corridors: [c(2, 0, 2, 9, "north_leg"), c(2, 7, 11, 2, "middle_leg"), c(12, 7, 2, 13, "south_leg"), c(12, 7, 8, 2, "east_leg")] }),
+  geomorph({ key: "passage_bridge_20_a", label: "Passage Bridge A", size: 20, kind: "connector", category: "connector", exits: ["west", "east"], tags: ["passage", "bridge", "hazard"], rooms: [], corridors: [c(0, 12, 6, 2, "west_landing"), c(6, 12, 8, 2, "bridge"), c(14, 12, 6, 2, "east_landing")] })
+];
+
+const A_SERIES_GEOMORPHS = [
+  tracedGeomorph({
+    key: "a01_tomb_cell_gallery_10", label: "A01 Tomb Cell Gallery", category: "tombs", exits: ["west", "east"], tags: ["series_a", "barrowmaze", "tomb_cells", "gallery"],
+    sockets: [s("west", 2), s("east", 2), s("west", 7), s("east", 7)],
+    cellMap: [
+      "##########",
+      "#RR#RR#RR#",
+      "#RR.RR.RR#",
+      "..........",
+      ".##.##.##.",
+      ".##.##.##.",
+      "..........",
+      ".RR.RR.RR.",
+      ".RR#RR#RR.",
+      "##########",
+    ],
+    rooms: [r("north_cell_a", 1, 1, 2, 2, "burial_cell"), r("north_cell_b", 4, 1, 2, 2, "burial_cell"), r("north_cell_c", 7, 1, 2, 2, "burial_cell"), r("south_cell_a", 1, 7, 2, 2, "burial_cell"), r("south_cell_b", 4, 7, 2, 2, "burial_cell"), r("south_cell_c", 7, 7, 2, 2, "burial_cell")],
+    corridors: [c(0, 3, 10, 1, "upper_gallery"), c(0, 6, 10, 1, "lower_gallery"), c(0, 3, 1, 4, "west_side_link"), c(9, 3, 1, 4, "east_side_link")],
+    doors: [d("north_cell_a", "south"), d("north_cell_b", "south"), d("north_cell_c", "south"), d("south_cell_a", "north"), d("south_cell_b", "north"), d("south_cell_c", "north")]
+  }, [t(2, 2, "s"), t(5, 2, "s"), t(8, 2, "s"), t(2, 7, "n"), t(5, 7, "n"), t(8, 7, "n")]),
+  tracedGeomorph({
+    key: "a02_four_crypt_hub_10", label: "A02 Four Crypt Hub", category: "tombs", exits: ["north", "east", "south", "west"], tags: ["series_a", "barrowmaze", "hub", "crypt"],
+    sockets: [s("north", 2), s("north", 7), s("east", 2), s("east", 7), s("south", 2), s("south", 7), s("west", 2), s("west", 7)],
+    cellMap: [
+      "##.####.##",
+      "##.RRRR.##",
+      "..........",
+      "RR.RRRR.RR",
+      "RR.RRRR.RR",
+      "RR.RRRR.RR",
+      "RR.RRRR.RR",
+      "..........",
+      "##.RRRR.##",
+      "##.####.##",
+    ],
+    rooms: [r("north_hall", 3, 1, 4, 1, "north_hall"), r("central_hall", 3, 3, 4, 4, "central_hall"), r("west_chamber", 0, 3, 2, 4, "side_chamber"), r("east_chamber", 8, 3, 2, 4, "side_chamber"), r("south_hall", 3, 8, 4, 1, "south_hall")],
+    corridors: [c(2, 0, 1, 10, "west_vertical_axis"), c(7, 0, 1, 10, "east_vertical_axis"), c(0, 2, 10, 1, "upper_cross_axis"), c(0, 7, 10, 1, "lower_cross_axis")],
+    doors: [d("north_hall", "south"), d("central_hall", "north"), d("central_hall", "west"), d("central_hall", "east"), d("central_hall", "south", "corridor", "secret"), d("west_chamber", "east"), d("east_chamber", "west")]
+  }, [t(4, 1, "s"), t(3, 3, "w"), t(6, 3, "e"), t(4, 6, "s", "secret"), t(4, 8, "n"), t(1, 4, "e"), t(8, 4, "w")]),
+  tracedGeomorph({
+    key: "a03_ossuary_loop_10", label: "A03 Ossuary Loop", category: "tombs", exits: ["north", "south"], tags: ["series_a", "barrowmaze", "ossuary", "loop"],
+    sockets: [s("north", 2), s("north", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..###..#",
+      "##.......#",
+      "##.RRRR.##",
+      "#RRRRRRRR#",
+      "#RRRRRRRR#",
+      "#RRRRRRRR#",
+      "##.......#",
+      "##..###..#",
+      "##..###..#",
+    ],
+    rooms: [r("ossuary", 3, 3, 4, 4, "ossuary"), r("bone_niche_w", 1, 4, 2, 3, "bone_niche"), r("bone_niche_e", 7, 4, 2, 3, "bone_niche")],
+    corridors: [c(2, 0, 2, 10, "west_loop"), c(7, 0, 2, 10, "east_loop"), c(2, 2, 7, 2, "north_loop"), c(2, 7, 7, 2, "south_loop")],
+    doors: [d("ossuary", "west"), d("ossuary", "east"), d("bone_niche_w", "east"), d("bone_niche_e", "west")]
+  }, [t(2, 4, "n"), t(3, 4, "w"), t(7, 4, "n"), t(6, 4, "e"), t(2, 5, "e"), t(7, 5, "w")]),
+  tracedGeomorph({
+    key: "a04_sealed_vault_pair_10", label: "A04 Sealed Vault Pair", category: "treasure", exits: ["west", "east"], tags: ["series_a", "barrowmaze", "sealed_vault", "locked"],
+    sockets: [s("west", 2), s("east", 2), s("west", 7), s("east", 7)],
+    cellMap: [
+      "##########",
+      "##RRR##RR#",
+      "....R##R..",
+      "....R##R..",
+      ".##....##.",
+      ".##....##.",
+      ".##.RRR...",
+      "....RRR...",
+      "....RRR...",
+      "##########",
+    ],
+    rooms: [r("north_vault", 2, 1, 3, 3, "sealed_vault"), r("south_vault", 5, 6, 3, 3, "sealed_vault"), r("guard_niche", 7, 1, 2, 2, "guard_niche")],
+    corridors: [c(0, 2, 10, 2, "upper_hall"), c(0, 7, 10, 2, "lower_hall"), c(2, 2, 2, 7, "west_link"), c(7, 2, 2, 7, "east_link")],
+    doors: [d("north_vault", "south", "corridor", "locked"), d("south_vault", "north", "corridor", "locked"), d("guard_niche", "south")]
+  }, [t(4, 3, "s", "locked"), t(5, 6, "n", "locked"), t(8, 2, "s")]),
+  tracedGeomorph({
+    key: "a05_chapel_crypt_10", label: "A05 Chapel Crypt", category: "religious", exits: ["north", "south"], tags: ["series_a", "barrowmaze", "chapel", "crypt"],
+    sockets: [s("north", 2), s("north", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..#RRR.#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##..##...#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##RRRRRR.#",
+      "##..###..#",
+    ],
+    rooms: [r("chapel", 2, 2, 6, 3, "mortuary_chapel"), r("north_vestry", 5, 1, 3, 2, "vestry"), r("south_crypt", 2, 6, 6, 3, "burial_crypt")],
+    corridors: [c(2, 0, 2, 10, "processional_axis"), c(2, 2, 6, 2, "chapel_crossing"), c(2, 7, 6, 2, "crypt_crossing")],
+    doors: [d("chapel", "north"), d("chapel", "south"), d("north_vestry", "west"), d("south_crypt", "north")]
+  }, [t(3, 2, "n"), t(3, 4, "s"), t(5, 1, "s"), t(5, 2, "w"), t(3, 6, "n")]),
+  tracedGeomorph({
+    key: "a06_secret_reliquary_10", label: "A06 Secret Reliquary", category: "tombs", exits: ["west", "south"], tags: ["series_a", "barrowmaze", "secret", "reliquary"],
+    sockets: [s("west", 7), s("south", 2), s("south", 7)],
+    cellMap: [
+      "##########",
+      "#####RRR##",
+      "##..#RRR##",
+      "##..#...##",
+      "##..###.##",
+      "..RRRR..##",
+      "..RRRR.RR#",
+      ".........#",
+      "..RRRR.RR#",
+      "##..###..#",
+    ],
+    rooms: [r("antechamber", 2, 5, 4, 3, "antechamber"), r("reliquary", 5, 1, 3, 3, "secret_reliquary"), r("side_cell", 7, 6, 2, 3, "burial_cell")],
+    corridors: [c(0, 7, 10, 2, "public_hall"), c(2, 2, 2, 7, "north_spur"), c(7, 2, 2, 8, "east_spur")],
+    doors: [d("antechamber", "west"), d("reliquary", "south", "corridor", "secret"), d("side_cell", "west")]
+  }, [t(2, 5, "w"), t(2, 5, "n"), t(7, 3, "s", "secret"), t(7, 6, "w")]),
+  tracedGeomorph({
+    key: "a07_dead_end_tombs_10", label: "A07 Dead End Tombs", category: "tombs", exits: ["west"], tags: ["series_a", "barrowmaze", "dead_end", "tomb_cells"],
+    sockets: [s("west", 7)],
+    cellMap: [
+      "##########",
+      "##RR#RRR##",
+      "##RR#RRR##",
+      "##..#RRR##",
+      "##..##.###",
+      "##..##.###",
+      "##..##RRR#",
+      ".........#",
+      ".........#",
+      "##########",
+    ],
+    rooms: [r("false_tomb", 5, 1, 3, 3, "false_tomb"), r("end_crypt", 6, 6, 3, 3, "end_crypt"), r("north_cell", 2, 1, 2, 2, "burial_cell")],
+    corridors: [c(0, 7, 9, 2, "dead_end_hall"), c(2, 2, 2, 7, "north_spur"), c(7, 2, 2, 7, "end_spur")],
+    doors: [d("false_tomb", "south", "corridor", "secret"), d("end_crypt", "west"), d("north_cell", "south")]
+  }, [t(6, 3, "s", "secret"), t(6, 5, "s", "secret"), t(6, 7, "w"), t(3, 2, "s")]),
+  tracedGeomorph({
+    key: "a08_staggered_cell_block_10", label: "A08 Staggered Cell Block", category: "tombs", exits: ["north", "east"], tags: ["series_a", "barrowmaze", "tomb_cells", "dense"],
+    sockets: [s("north", 2), s("east", 7)],
+    cellMap: [
+      "##..######",
+      "##..######",
+      "#RR......#",
+      "#RR.##...#",
+      "##..RR...#",
+      "##..RR...#",
+      "##..###RR.",
+      "#RR....RR.",
+      "#RR.......",
+      "##..######",
+    ],
+    rooms: [r("cell_a", 1, 2, 2, 2, "burial_cell"), r("cell_b", 4, 4, 2, 2, "burial_cell"), r("cell_c", 7, 6, 2, 2, "burial_cell"), r("cell_d", 1, 7, 2, 2, "burial_cell")],
+    corridors: [c(2, 0, 2, 10, "north_lane"), c(2, 2, 7, 2, "upper_lane"), c(4, 4, 5, 2, "middle_lane"), c(7, 7, 3, 2, "east_lane"), c(2, 7, 7, 2, "lower_lane")],
+    doors: [d("cell_a", "east"), d("cell_b", "west"), d("cell_c", "west"), d("cell_d", "east")]
+  }, [t(2, 2, "e"), t(4, 4, "w"), t(7, 7, "w"), t(2, 7, "e")]),
+  tracedGeomorph({
+    key: "a09_shrine_square_loop_10", label: "A09 Shrine Square Loop", category: "religious", exits: ["north", "east", "south", "west"], tags: ["series_a", "barrowmaze", "shrine", "loop"],
+    sockets: [s("north", 2), s("north", 7), s("east", 2), s("east", 7), s("south", 2), s("south", 7), s("west", 2), s("west", 7)],
+    cellMap: [
+      "##..###..#",
+      "##..#RR..#",
+      "..........",
+      "##.RRRR.##",
+      "##.RRRR.##",
+      "##.RRRR.##",
+      "##.RRRR.##",
+      "..........",
+      "##RR#..###",
+      "##..###..#",
+    ],
+    rooms: [r("central_shrine", 3, 3, 4, 4, "central_shrine"), r("offering_cell", 7, 1, 2, 1, "offering_cell"), r("priest_cell", 2, 8, 2, 1, "priest_cell")],
+    corridors: [c(2, 0, 2, 10, "west_axis"), c(7, 0, 2, 10, "east_axis"), c(0, 2, 10, 2, "north_axis"), c(0, 7, 10, 2, "south_axis")],
+    doors: [d("central_shrine", "north"), d("central_shrine", "south"), d("offering_cell", "south"), d("priest_cell", "east", "corridor", "locked")]
+  }, [t(4, 3, "n"), t(4, 6, "s"), t(8, 1, "s"), t(2, 8, "e", "locked"), t(2, 8, "s", "locked")]),
+  tracedGeomorph({
+    key: "a10_flooded_crypt_edge_10", label: "A10 Flooded Crypt Edge", category: "tombs", exits: ["west", "east"], tags: ["series_a", "barrowmaze", "flooded", "crypt"],
+    sockets: [s("west", 2), s("east", 2), s("west", 7), s("east", 7)],
+    cellMap: [
+      "##########",
+      "#RR#######",
+      "#RR.......",
+      "....RRRR..",
+      "....RRRR..",
+      "##..RRRR##",
+      "##.......#",
+      ".........#",
+      ".......RR.",
+      "#######RR#",
+    ],
+    rooms: [r("flooded_crypt", 3, 3, 4, 3, "flooded_crypt", ["flooded"]), r("dry_cell_w", 1, 1, 2, 2, "burial_cell"), r("dry_cell_e", 7, 7, 2, 3, "burial_cell")],
+    corridors: [c(0, 2, 10, 2, "dry_gallery"), c(0, 7, 10, 2, "flooded_gallery"), c(2, 2, 2, 7, "west_link"), c(7, 2, 2, 7, "east_link")],
+    doors: [d("flooded_crypt", "north"), d("flooded_crypt", "south"), d("dry_cell_w", "south"), d("dry_cell_e", "north")]
+  }, [t(4, 3, "n"), t(4, 5, "s"), t(2, 2, "s"), t(7, 7, "n")])
+];
+
+const STANDARD_GEOMORPH_LIBRARY = [...A_SERIES_GEOMORPHS, ...NORMAL_GEOMORPHS, ...THEME_GEOMORPHS, ...PASSAGE_CONNECTOR_GEOMORPHS];
 
 const STANDARD_GEOMORPH_COUNTS = Object.freeze({
   total: STANDARD_GEOMORPH_LIBRARY.length,
   normal: NORMAL_GEOMORPHS.length,
   themed: THEME_GEOMORPHS.length,
-  connector: CONNECTOR_GEOMORPHS.length,
+  connector: PASSAGE_CONNECTOR_GEOMORPHS.length,
   size10: STANDARD_GEOMORPH_LIBRARY.filter((geomorph) => geomorph.size === 10).length,
   size20: STANDARD_GEOMORPH_LIBRARY.filter((geomorph) => geomorph.size === 20).length
 });
@@ -1544,7 +2522,6 @@ function validateStandardGeomorphLibrary() {
 
   return { valid: errors.length === 0, errors };
 }
-
 
 /* ---- dungeon-generator.js ---- */
 
@@ -2503,7 +3480,7 @@ function generateDungeon(options) {
     generateFloor(dungeon, f, rng, options);
   }
   addFloorConnections(dungeon, rng);
-  finishDungeonGeneration(dungeon);
+  finishDungeonGeneration(dungeon, rng);
 
   return dungeon;
 }
@@ -2541,26 +3518,103 @@ async function generateDungeonAsync(options, onProgress) {
   onProgress?.({ phase: "connections", floorIndex: floorCount - 1, floorCount, message: "Linking stairs and passages between layers." });
   await delay(GENERATION_STEP_DELAY);
   addFloorConnections(dungeon, rng);
-  finishDungeonGeneration(dungeon);
+  finishDungeonGeneration(dungeon, rng);
 
   onProgress?.({ phase: "complete", floorIndex: floorCount - 1, floorCount, message: "Dungeon ready." });
 
   return dungeon;
 }
 
-function finishDungeonGeneration(dungeon) {
-  const firstRoom = dungeon.rooms.find((room) => room.floorIndex === 0);
+function finishDungeonGeneration(dungeon, rng = Math.random) {
+  const firstRoom = chooseStartingRoom(dungeon);
   if (firstRoom) {
+    openStartingRoomExit(firstRoom);
+    markSurfaceEntrance(dungeon, firstRoom);
     dungeon.player.floorIndex = 0;
     dungeon.player.wallX = Math.floor(firstRoom.x + firstRoom.width / 2);
     dungeon.player.wallY = Math.floor(firstRoom.y + firstRoom.height / 2);
     markVisited(dungeon, dungeon.player.floorIndex, dungeon.player.wallX, dungeon.player.wallY);
   }
 
+  const accessRepairs = ensureDungeonAccessibility(dungeon, rng);
+  if (accessRepairs > 0) {
+    dungeon.eventLog.push({
+      turn: 1,
+      text: `Route audit repaired ${accessRepairs} unreachable area${accessRepairs === 1 ? "" : "s"}.`,
+    });
+  }
+  const removedStrayCells = pruneUnreachableNonRoomCells(dungeon);
+  if (removedStrayCells > 0) {
+    dungeon.eventLog.push({
+      turn: 1,
+      text: `Route audit removed ${removedStrayCells} unreachable passage cell${removedStrayCells === 1 ? "" : "s"}.`,
+    });
+  }
+
   dungeon.eventLog.push({
     turn: 1,
     text: `Generated ${dungeon.rooms.length} rooms across ${dungeon.floorCount} layer(s).`,
   });
+}
+
+function chooseStartingRoom(dungeon) {
+  const rooms = dungeon.rooms.filter((room) => room.floorIndex === 0 && !room.tags?.includes("boss"));
+  const entrance = rooms
+    .filter((room) => room.tags?.includes("surface_entrance"))
+    .sort((a, b) => startingRoomScore(b) - startingRoomScore(a) || a.id.localeCompare(b.id))[0];
+  if (entrance) return entrance;
+  const scored = rooms
+    .map((room) => ({ room, score: startingRoomScore(room) }))
+    .sort((a, b) => b.score - a.score || a.room.id.localeCompare(b.room.id));
+  return scored[0]?.room ?? dungeon.rooms.find((room) => room.floorIndex === 0);
+}
+
+function startingRoomScore(room) {
+  let score = 0;
+  if (room.tags?.includes("surface_entrance")) score += 100;
+  if (room.tags?.includes("entry")) score += 20;
+  if (room.doors?.length) score += 8;
+  if (room.doors?.some((door) => door.doorType === "open_chamber")) score += 12;
+  if (room.doors?.some((door) => door.revealed && !door.locked && door.doorType !== "secret")) score += 10;
+  if (room.doors?.some((door) => door.doorType === "secret")) score -= 8;
+  if (room.doors?.every((door) => door.locked || door.doorType === "secret")) score -= 20;
+  if (room.width >= 3 && room.height >= 3) score += 4;
+  if (room.tags?.some((tag) => ["landmark", "vault", "sealed", "boss"].includes(tag))) score -= 4;
+  return score;
+}
+
+function openStartingRoomExit(room) {
+  const door = (room.doors ?? []).find((item) => item.doorType === "open_chamber")
+    ?? (room.doors ?? []).find((item) => item.doorType !== "secret" && !item.forcedLocked)
+    ?? (room.doors ?? [])[0];
+  if (!door) return;
+  door.revealed = true;
+  door.locked = false;
+  door.lockType = null;
+  door.open = true;
+  if (door.doorType === "secret") door.doorType = "normal";
+}
+
+function markSurfaceEntrance(dungeon, room) {
+  if (!room?.tags?.includes("surface_entrance")) return;
+  const x = Math.floor(room.x + room.width / 2);
+  const y = Math.floor(room.y + room.height / 2);
+  const cell = getCell(dungeon, room.floorIndex, x, y);
+  dungeon.entrance = {
+    floorIndex: room.floorIndex,
+    roomId: room.id,
+    geomorphId: room.geomorphId,
+    x,
+    y,
+    kind: "surface_entrance",
+    label: "Surface Entrance",
+  };
+  if (cell) {
+    cell.labels = [...new Set([...(cell.labels ?? []), "surface_entrance", "stairs_up", "entry"])];
+    cell.surfaceEntrance = dungeon.entrance;
+    cell.revealed = true;
+    cell.visited = true;
+  }
 }
 
 function delay(ms) {
@@ -2983,6 +4037,15 @@ function seedSuperLatticeGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts
   const geomorphs = [];
   const usedKeys = [];
 
+  if (floorIndex === 0) {
+    const entrance = placeSuperLatticeEntranceGeomorph(dungeon, floorIndex, rng, rooms, precincts, occupied, lattice);
+    if (entrance) {
+      geomorphs.push(entrance);
+      rememberGeomorphKey(usedKeys, entrance.blueprintKey);
+      markGeomorphBlocks(occupied, entrance);
+    }
+  }
+
   for (const cell of shuffle(rng, superLatticeCells("district"))) {
     if (occupied.has(blockKey(cell.blockX, cell.blockY))) continue;
     const precinct = precinctForLatticeBlock(precincts, cell.blockX, cell.blockY, lattice);
@@ -3031,12 +4094,50 @@ function seedSuperLatticeGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts
   return geomorphs;
 }
 
+function placeSuperLatticeEntranceGeomorph(dungeon, floorIndex, rng, rooms, precincts, occupied, lattice) {
+  const blueprint = chooseEntranceGeomorphBlueprint(rng);
+  if (!blueprint) return null;
+  const cells = shuffle(rng, superLatticeCells("district"))
+    .filter((cell) => isOuterLatticeCell(cell.blockX, cell.blockY, lattice))
+    .concat(shuffle(rng, superLatticeCells("district")));
+  for (const cell of cells) {
+    if (occupied.has(blockKey(cell.blockX, cell.blockY))) continue;
+    const transform = chooseEntranceTransform(rng, blueprint, outerFacingSide(cell.blockX, cell.blockY, lattice));
+    if (!transform) continue;
+    const footprintBlocks = geomorphFootprintBlocks(blueprint, lattice.blockSize);
+    if (!superLatticeCanPlaceFootprint(occupied, cell.blockX, cell.blockY, footprintBlocks, "district", lattice)) continue;
+    const precinct = precinctForLatticeBlock(precincts, cell.blockX, cell.blockY, lattice);
+    const placed = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, precinct, blueprint, transform, lattice.origin + cell.blockX * lattice.blockSize, lattice.origin + cell.blockY * lattice.blockSize, rng, {
+      blockX: cell.blockX,
+      blockY: cell.blockY,
+      blockWidth: footprintBlocks,
+      blockHeight: footprintBlocks,
+      parentId: null,
+      latticeZone: "district",
+      startEntrance: true,
+    });
+    if (placed) return placed;
+  }
+  return null;
+}
+
 function seedGeomorphScatter(dungeon, floorIndex, rng, rooms, precincts, plan) {
   if (!precincts.length) return [];
   const target = geomorphTargetForSize(dungeon.sizeCategory, precincts.length, plan);
   const geomorphs = [];
   const orderedPrecincts = nearestRoute([...precincts]);
   const flowState = { connectorStreak: 0, normalRun: 0, recentKeys: [] };
+  if (floorIndex === 0) {
+    const entranceBlueprint = chooseEntranceGeomorphBlueprint(rng);
+    const entrancePrecinct = choosePrecinctForGeomorph(rng, orderedPrecincts);
+    const entrance = entranceBlueprint && entrancePrecinct
+      ? tryPlaceGeomorph(dungeon, floorIndex, rng, rooms, entrancePrecinct, entranceBlueprint)
+      : null;
+    if (entrance) {
+      geomorphs.push(entrance);
+      updateGeomorphFlowState(flowState, entrance);
+    }
+  }
   let attempts = 0;
   while (geomorphs.length < target && attempts < target * 12) {
     attempts += 1;
@@ -3056,6 +4157,8 @@ function seedGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts, plan) {
   const blockSize = 10;
   const blockCols = Math.floor(dungeon.wallGridWidth / blockSize);
   const blockRows = Math.floor(dungeon.wallGridHeight / blockSize);
+  const originX = Math.floor((dungeon.wallGridWidth - blockCols * blockSize) / 2);
+  const originY = Math.floor((dungeon.wallGridHeight - blockRows * blockSize) / 2);
   const targetBlocks = geomorphBlockTargetForSize(dungeon.sizeCategory, blockCols, blockRows);
   const occupied = new Map();
   const geomorphs = [];
@@ -3068,12 +4171,16 @@ function seedGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts, plan) {
     blockX: Math.max(0, Math.floor(blockCols / 2)),
     blockY: Math.max(0, Math.floor(blockRows / 2)),
   };
-  const startPrecinct = precinctForGridBlock(precincts, startBlock.blockX, startBlock.blockY, blockSize);
-  const startBlueprint = chooseExitMatchedGeomorphBlueprint(rng, startPrecinct, flowState, null, plan);
+  const startPrecinct = precinctForGridBlock(precincts, startBlock.blockX, startBlock.blockY, blockSize, originX, originY);
+  const startBlueprint = floorIndex === 0
+    ? chooseEntranceGeomorphBlueprint(rng)
+    : chooseExitMatchedGeomorphBlueprint(rng, startPrecinct, flowState, null, plan);
   if (!startBlueprint) return [];
-  const startTransform = chooseExitMatchedTransform(rng, startBlueprint);
+  const startTransform = floorIndex === 0
+    ? chooseEntranceTransform(rng, startBlueprint)
+    : chooseExitMatchedTransform(rng, startBlueprint);
   const startFootprintBlocks = geomorphFootprintBlocks(startBlueprint, blockSize);
-  const startPlaced = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, startPrecinct, startBlueprint, startTransform, startBlock.blockX * blockSize, startBlock.blockY * blockSize, rng, {
+  const startPlaced = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, startPrecinct, startBlueprint, startTransform, originX + startBlock.blockX * blockSize, originY + startBlock.blockY * blockSize, rng, {
     blockX: startBlock.blockX,
     blockY: startBlock.blockY,
     blockWidth: startFootprintBlocks,
@@ -3101,7 +4208,7 @@ function seedGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts, plan) {
     const targetBlockX = frontierExit.blockX + dir.dx;
     const targetBlockY = frontierExit.blockY + dir.dy;
     if (!gridFootprintIsFree(occupied, targetBlockX, targetBlockY, 1, 1, blockCols, blockRows)) continue;
-    const precinct = precinctForGridBlock(precincts, targetBlockX, targetBlockY, blockSize);
+    const precinct = precinctForGridBlock(precincts, targetBlockX, targetBlockY, blockSize, originX, originY);
     const requiredSocket = { side: dir.opposite, offset: frontierExit.offset, width: frontierExit.width };
     const blueprint = chooseExitMatchedGeomorphBlueprint(rng, precinct, flowState, requiredSocket, plan);
     if (!blueprint) continue;
@@ -3110,7 +4217,7 @@ function seedGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts, plan) {
     const footprintBlocks = geomorphFootprintBlocks(blueprint, blockSize);
     const placement = geomorphPlacementForRequiredSocket(targetBlockX, targetBlockY, footprintBlocks, requiredSocket, blockSize);
     if (!gridFootprintIsFree(occupied, placement.blockX, placement.blockY, footprintBlocks, footprintBlocks, blockCols, blockRows)) continue;
-    const placed = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, precinct, blueprint, transform, placement.blockX * blockSize, placement.blockY * blockSize, rng, {
+    const placed = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, precinct, blueprint, transform, originX + placement.blockX * blockSize, originY + placement.blockY * blockSize, rng, {
       blockX: placement.blockX,
       blockY: placement.blockY,
       blockWidth: footprintBlocks,
@@ -3133,16 +4240,18 @@ function seedGeomorphGrid(dungeon, floorIndex, rng, rooms, precincts, plan) {
 }
 
 function placeGeomorphClusterSeed(dungeon, floorIndex, rng, rooms, precincts, occupied, geomorphs, flowState, blockCols, blockRows, blockSize, plan) {
+  const originX = Math.floor((dungeon.wallGridWidth - blockCols * blockSize) / 2);
+  const originY = Math.floor((dungeon.wallGridHeight - blockRows * blockSize) / 2);
   const seedBlock = chooseNewClusterBlock(rng, occupied, blockCols, blockRows);
   if (!seedBlock) return null;
-  const precinct = precinctForGridBlock(precincts, seedBlock.blockX, seedBlock.blockY, blockSize);
+  const precinct = precinctForGridBlock(precincts, seedBlock.blockX, seedBlock.blockY, blockSize, originX, originY);
   const blueprint = chooseExitMatchedGeomorphBlueprint(rng, precinct, flowState, null, plan);
   if (!blueprint) return null;
   const transform = chooseExitMatchedTransform(rng, blueprint);
   if (!transform) return null;
   const footprintBlocks = geomorphFootprintBlocks(blueprint, blockSize);
   if (!gridFootprintIsFree(occupied, seedBlock.blockX, seedBlock.blockY, footprintBlocks, footprintBlocks, blockCols, blockRows)) return null;
-  const placed = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, precinct, blueprint, transform, seedBlock.blockX * blockSize, seedBlock.blockY * blockSize, rng, {
+  const placed = tryPlaceGeomorphAt(dungeon, floorIndex, rooms, precinct, blueprint, transform, originX + seedBlock.blockX * blockSize, originY + seedBlock.blockY * blockSize, rng, {
     blockX: seedBlock.blockX,
     blockY: seedBlock.blockY,
     blockWidth: footprintBlocks,
@@ -3211,6 +4320,7 @@ function precinctForLatticeBlock(precincts, blockX, blockY, lattice) {
 function chooseSuperLatticeBlueprint(rng, precinct, size, kind, plan, recentKeys = []) {
   const candidates = STANDARD_GEOMORPH_LIBRARY
     .filter((blueprint) => (blueprint.size ?? 10) === size)
+    .filter((blueprint) => !isStartOnlyGeomorph(blueprint))
     .filter((blueprint) => kind === "connector" ? blueprint.kind === "connector" : blueprint.kind !== "connector")
     .filter((blueprint) => kind === "connector" || geomorphMatchesPrecinct(blueprint, precinct))
     .map((blueprint) => normalizeStandardGeomorphBlueprint(blueprint));
@@ -3272,8 +4382,8 @@ function countOccupiedBlocksNear(occupied, blockX, blockY, radius) {
 
 function geomorphBlockTargetForSize(sizeCategory, blockCols, blockRows) {
   const available = blockCols * blockRows;
-  if (sizeCategory === "medium") return Math.min(available, Math.max(10, Math.floor(available * 0.7)));
-  if (sizeCategory === "large") return Math.min(available, Math.max(44, Math.floor(available * 0.68)));
+  if (sizeCategory === "medium") return available;
+  if (sizeCategory === "large") return Math.min(available, Math.max(58, Math.floor(available * 0.76)));
   return Math.min(available, Math.max(150, Math.floor(available * 0.56)));
 }
 
@@ -3298,6 +4408,7 @@ function geomorphPlacementForRequiredSocket(targetBlockX, targetBlockY, footprin
 function chooseExitMatchedGeomorphBlueprint(rng, precinct, flowState = { connectorStreak: 0, normalRun: 0, recentKeys: [] }, requiredSocket = null, plan = null) {
   const candidates = STANDARD_GEOMORPH_LIBRARY
     .filter((blueprint) => blueprint.size === 10 || (blueprint.size === 20 && flowState.normalRun >= 2 && flowState.connectorStreak === 0))
+    .filter((blueprint) => !isStartOnlyGeomorph(blueprint))
     .filter((blueprint) => geomorphMatchesPrecinct(blueprint, precinct))
     .map((blueprint) => normalizeStandardGeomorphBlueprint(blueprint))
     .filter((blueprint) => !requiredSocket || exitMatchedTransforms(blueprint, requiredSocket).length);
@@ -3554,9 +4665,9 @@ function hasOccupiedNeighbor(occupied, blockX, blockY) {
     || occupied.has(blockKey(blockX, blockY + 1));
 }
 
-function precinctForGridBlock(precincts, blockX, blockY, blockSize) {
-  const x = blockX * blockSize + Math.floor(blockSize / 2);
-  const y = blockY * blockSize + Math.floor(blockSize / 2);
+function precinctForGridBlock(precincts, blockX, blockY, blockSize, originX = 0, originY = 0) {
+  const x = originX + blockX * blockSize + Math.floor(blockSize / 2);
+  const y = originY + blockY * blockSize + Math.floor(blockSize / 2);
   return precincts.find((precinct) => x >= precinct.x && x < precinct.x + precinct.width && y >= precinct.y && y < precinct.y + precinct.height)
     ?? precincts[0];
 }
@@ -3581,6 +4692,7 @@ function choosePrecinctForGeomorph(rng, precincts) {
 
 function chooseGeomorphBlueprint(rng, precinct, flowState = { connectorStreak: 0, normalRun: 0 }) {
   const candidates = STANDARD_GEOMORPH_LIBRARY
+    .filter((blueprint) => !isStartOnlyGeomorph(blueprint))
     .filter((blueprint) => geomorphMatchesPrecinct(blueprint, precinct))
     .map((blueprint) => normalizeStandardGeomorphBlueprint(blueprint));
   const connectorChance = flowState.connectorStreak >= 2
@@ -3603,6 +4715,39 @@ function chooseGeomorphBlueprint(rng, precinct, flowState = { connectorStreak: 0
   }));
   if (!pool.length) return null;
   return weightedChoice(rng, pool);
+}
+
+function isStartOnlyGeomorph(blueprint) {
+  return blueprint.tags?.includes("start_only") || blueprint.tags?.includes("surface_entrance");
+}
+
+function chooseEntranceGeomorphBlueprint(rng) {
+  const candidates = STANDARD_GEOMORPH_LIBRARY
+    .filter((blueprint) => blueprint.kind !== "connector" && isStartOnlyGeomorph(blueprint))
+    .map((blueprint) => normalizeStandardGeomorphBlueprint(blueprint));
+  return candidates.length ? weightedChoice(rng, candidates.map((blueprint) => ({ ...blueprint, weight: blueprint.weight ?? 10 }))) : null;
+}
+
+function chooseEntranceTransform(rng, blueprint, preferredOuterSide = null) {
+  const transforms = exitMatchedTransforms(blueprint);
+  if (!transforms.length) return null;
+  if (!preferredOuterSide) return choose(rng, transforms);
+  const preferred = transforms.filter((transform) => transformedExitSides(blueprint, transform).includes(preferredOuterSide));
+  return choose(rng, preferred.length ? preferred : transforms);
+}
+
+function isOuterLatticeCell(blockX, blockY, lattice) {
+  return blockX === 0 || blockY === 0 || blockX === lattice.unitsPerSide - 1 || blockY === lattice.unitsPerSide - 1;
+}
+
+function outerFacingSide(blockX, blockY, lattice) {
+  const distances = [
+    { side: "west", value: blockX },
+    { side: "north", value: blockY },
+    { side: "east", value: lattice.unitsPerSide - 1 - blockX },
+    { side: "south", value: lattice.unitsPerSide - 1 - blockY },
+  ].sort((a, b) => a.value - b.value);
+  return distances[0]?.side ?? null;
 }
 
 function normalizeStandardGeomorphBlueprint(blueprint) {
@@ -4001,7 +5146,12 @@ function connectGeomorphBlockGraph(dungeon, rooms, geomorphs, rng) {
       const b = geomorphs[j];
       if (!geomorphBlocksTouch(a, b)) continue;
       const key = pairKey(a.id, b.id);
-      if (connectedPairs.has(key) || rng() > 0.32) continue;
+      const adjacentLinkChance = dungeon.sizeCategory === "super"
+        ? 0.32
+        : dungeon.sizeCategory === "large"
+          ? 0.44
+          : 0.32;
+      if (connectedPairs.has(key) || rng() > adjacentLinkChance) continue;
       connectGeomorphPair(dungeon, rooms, a, b, rng, "geomorph_adjacent_link");
       connectedPairs.add(key);
     }
@@ -4633,10 +5783,12 @@ function makeDoorRecord(dungeon, room, point, corridorId, kind) {
     connectionKind: kind,
     revealed: kind !== "secret",
     open: kind === "open_chamber",
-    locked: false,
-    lockType: null,
+    locked: kind === "secret",
+    lockType: kind === "secret" ? "generic_key_or_pick" : null,
     keyId: null,
     stuck: false,
+    temporaryReveal: false,
+    permanentlyRevealed: kind !== "secret",
   };
 }
 
@@ -4674,7 +5826,7 @@ function addDeadEnds(dungeon, floorIndex, rng, count) {
 function addFloorConnections(dungeon, rng) {
   if (dungeon.floorCount < 2) return;
   for (let floorIndex = 0; floorIndex < dungeon.floorCount - 1; floorIndex += 1) {
-    addFloorConnection(dungeon, floorIndex, floorIndex + 1, rng, "stairs");
+    ensureFloorConnectionPair(dungeon, floorIndex, floorIndex + 1, rng, "stairs");
   }
 }
 
@@ -4716,6 +5868,59 @@ function addFloorConnection(dungeon, fromFloorIndex, toFloorIndex, rng, kind) {
   dungeon.floors[toFloorIndex].connectionsUp.push(id);
 }
 
+function ensureFloorConnectionPair(dungeon, fromFloorIndex, toFloorIndex, rng, kind) {
+  if (hasFloorConnectionPair(dungeon, fromFloorIndex, toFloorIndex)) return true;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    addFloorConnection(dungeon, fromFloorIndex, toFloorIndex, rng, kind);
+    if (hasFloorConnectionPair(dungeon, fromFloorIndex, toFloorIndex)) return true;
+  }
+  return forceFloorConnection(dungeon, fromFloorIndex, toFloorIndex, rng, kind);
+}
+
+function hasFloorConnectionPair(dungeon, fromFloorIndex, toFloorIndex) {
+  return dungeon.floorConnections.some((connection) => (
+    connection.from.floorIndex === fromFloorIndex &&
+    connection.to.floorIndex === toFloorIndex
+  ));
+}
+
+function forceFloorConnection(dungeon, fromFloorIndex, toFloorIndex, rng, kind) {
+  const fromCell = chooseFallbackConnectionCell(dungeon, fromFloorIndex, rng);
+  const toCell = chooseFallbackConnectionCell(dungeon, toFloorIndex, rng);
+  if (!fromCell || !toCell) return false;
+  const id = `floor_link_${dungeon.floorConnections.length + 1}`;
+  const connection = {
+    id,
+    kind,
+    connectionType: "vertical",
+    bidirectional: true,
+    skipFloors: Math.max(0, toFloorIndex - fromFloorIndex - 1),
+    assetKey: "stairsThick2x2Transparent",
+    from: {
+      floorIndex: fromFloorIndex,
+      wallX: fromCell.wallX,
+      wallY: fromCell.wallY,
+      marker: "stairs_down",
+      targetFloorIndex: toFloorIndex,
+    },
+    to: {
+      floorIndex: toFloorIndex,
+      wallX: toCell.wallX,
+      wallY: toCell.wallY,
+      marker: "stairs_up",
+      targetFloorIndex: fromFloorIndex,
+    },
+    revealed: false,
+    notes: "Forced by the floor-link validator so adjacent dungeon levels always connect.",
+  };
+  markConnectionCell(fromCell, connection, "from");
+  markConnectionCell(toCell, connection, "to");
+  dungeon.floorConnections.push(connection);
+  dungeon.floors[fromFloorIndex].connectionsDown.push(id);
+  dungeon.floors[toFloorIndex].connectionsUp.push(id);
+  return true;
+}
+
 function chooseConnectionCell(dungeon, floorIndex, rng) {
   const rooms = dungeon.rooms.filter((room) => room.floorIndex === floorIndex && !room.tags.includes("boss"));
   const room = choose(rng, rooms.length ? rooms : dungeon.rooms.filter((item) => item.floorIndex === floorIndex));
@@ -4723,6 +5928,24 @@ function chooseConnectionCell(dungeon, floorIndex, rng) {
   const x = randInt(rng, room.x, room.x + room.width - 1);
   const y = randInt(rng, room.y, room.y + room.height - 1);
   return getCell(dungeon, floorIndex, x, y);
+}
+
+function chooseFallbackConnectionCell(dungeon, floorIndex, rng) {
+  const floor = dungeon.floors[floorIndex];
+  const candidates = [];
+  for (const row of floor.wallGrid) {
+    for (const cell of row) {
+      if (!cell.walkable) continue;
+      if (cell.spaceType === "room") {
+        const room = dungeon.rooms.find((item) => item.id === cell.roomId);
+        if (room?.tags?.includes("boss")) continue;
+        candidates.push(cell, cell, cell);
+      } else if (cell.spaceType === "corridor") {
+        candidates.push(cell);
+      }
+    }
+  }
+  return choose(rng, candidates);
 }
 
 function markConnectionCell(cell, connection, endpoint) {
@@ -4772,6 +5995,12 @@ function finalizeDoorStates(dungeon, floorIndex, rng) {
         door.open = true;
         continue;
       }
+      if (door.doorType === "secret") {
+        door.locked = true;
+        door.lockType = door.lockType ?? "generic_key_or_pick";
+        door.open = false;
+        continue;
+      }
       if (door.forcedLocked) {
         door.locked = true;
         door.lockType = door.lockType ?? "generic_key_or_pick";
@@ -4785,10 +6014,250 @@ function finalizeDoorStates(dungeon, floorIndex, rng) {
   }
 }
 
+function ensureDungeonAccessibility(dungeon, rng) {
+  let repairs = 0;
+  for (let floorIndex = 0; floorIndex < dungeon.floorCount; floorIndex += 1) {
+    deriveEdges(dungeon, floorIndex);
+    repairs += ensureFloorAccessibility(dungeon, floorIndex, rng);
+  }
+  return repairs;
+}
+
+function ensureFloorAccessibility(dungeon, floorIndex, rng) {
+  const floorRooms = dungeon.rooms.filter((room) => room.floorIndex === floorIndex);
+  if (!floorRooms.length) return 0;
+  let starts = accessibilityStartCells(dungeon, floorIndex);
+  let reachable = traceReachableCells(dungeon, floorIndex, starts);
+  let repairs = 0;
+  const maxRepairs = Math.max(12, floorRooms.length + 4);
+
+  for (let attempt = 0; attempt < maxRepairs; attempt += 1) {
+    const inaccessible = floorRooms.filter((room) => !roomHasReachableCell(dungeon, floorIndex, room, reachable));
+    if (!inaccessible.length) break;
+    const accessible = floorRooms.filter((room) => roomHasReachableCell(dungeon, floorIndex, room, reachable));
+    if (!accessible.length) break;
+    const target = chooseNearestRoomPair(accessible, inaccessible);
+    if (!target) break;
+    connectRooms(dungeon, target.from, target.to, rng, "geomorph_accessibility_repair");
+    deriveEdges(dungeon, floorIndex);
+    let repairedReachable = traceReachableCells(dungeon, floorIndex, starts);
+    if (!roomHasReachableCell(dungeon, floorIndex, target.to, repairedReachable)) {
+      forceAccessCorridor(dungeon, floorIndex, target.from, target.to, rng);
+      deriveEdges(dungeon, floorIndex);
+    }
+    repairs += 1;
+    starts = accessibilityStartCells(dungeon, floorIndex);
+    reachable = traceReachableCells(dungeon, floorIndex, starts);
+  }
+
+  return repairs;
+}
+
+function pruneUnreachableNonRoomCells(dungeon) {
+  let removed = 0;
+  for (let floorIndex = 0; floorIndex < dungeon.floorCount; floorIndex += 1) {
+    const floor = dungeon.floors[floorIndex];
+    const starts = accessibilityStartCells(dungeon, floorIndex);
+    const reachable = traceReachableCells(dungeon, floorIndex, starts);
+    let removedThisFloor = 0;
+    for (const row of floor.wallGrid) {
+      for (const cell of row) {
+        if (!cell.walkable || cell.spaceType === "room" || cell.verticalConnection) continue;
+        if (reachable.has(walkKey(cell.wallX, cell.wallY))) continue;
+        cell.walkable = false;
+        cell.spaceType = "void";
+        cell.roomId = null;
+        cell.corridorId = null;
+        cell.geomorphId = null;
+        cell.eventLink = null;
+        cell.labels = [];
+        cell.edges = { north: "void", east: "void", south: "void", west: "void" };
+        cell.edgeFeatures = { north: null, east: null, south: null, west: null };
+        removed += 1;
+        removedThisFloor += 1;
+      }
+    }
+    if (removedThisFloor > 0) deriveEdges(dungeon, floorIndex);
+  }
+  return removed;
+}
+
+function accessibilityStartCells(dungeon, floorIndex) {
+  const starts = [];
+  if (floorIndex === 0) {
+    const start = getCell(dungeon, floorIndex, dungeon.player.wallX, dungeon.player.wallY);
+    if (start?.walkable) starts.push(start);
+  }
+  const floor = dungeon.floors[floorIndex];
+  for (const row of floor.wallGrid) {
+    for (const cell of row) {
+      if (!cell.walkable || !cell.verticalConnection) continue;
+      if (floorIndex === 0 || cell.verticalConnection.marker === "stairs_up") starts.push(cell);
+    }
+  }
+  if (starts.length) return starts;
+  const fallbackRoom = dungeon.rooms.find((room) => room.floorIndex === floorIndex && !room.tags?.includes("boss"))
+    ?? dungeon.rooms.find((room) => room.floorIndex === floorIndex);
+  const fallback = fallbackRoom
+    ? getCell(dungeon, floorIndex, Math.floor(fallbackRoom.x + fallbackRoom.width / 2), Math.floor(fallbackRoom.y + fallbackRoom.height / 2))
+    : null;
+  return fallback?.walkable ? [fallback] : [];
+}
+
+function traceReachableCells(dungeon, floorIndex, starts) {
+  const floor = dungeon.floors[floorIndex];
+  const reachable = new Set();
+  const queue = [];
+  for (const start of starts) {
+    if (!start?.walkable) continue;
+    const key = walkKey(start.wallX, start.wallY);
+    if (reachable.has(key)) continue;
+    reachable.add(key);
+    queue.push(start);
+  }
+  while (queue.length) {
+    const cell = queue.shift();
+    for (const dir of DIRS) {
+      if (!canTraceThroughEdge(cell, dir.name)) continue;
+      const next = floor.wallGrid[cell.wallY + dir.dy]?.[cell.wallX + dir.dx];
+      if (!next?.walkable) continue;
+      const key = walkKey(next.wallX, next.wallY);
+      if (reachable.has(key)) continue;
+      reachable.add(key);
+      queue.push(next);
+    }
+  }
+  return reachable;
+}
+
+function canTraceThroughEdge(cell, direction) {
+  const edge = cell.edges?.[direction];
+  return edge === "open" || edge === "open_chamber" || edge === "door" || edge === "secret_door";
+}
+
+function roomHasReachableCell(dungeon, floorIndex, room, reachable) {
+  for (let y = room.y; y < room.y + room.height; y += 1) {
+    for (let x = room.x; x < room.x + room.width; x += 1) {
+      const cell = getCell(dungeon, floorIndex, x, y);
+      if (cell?.walkable && reachable.has(walkKey(x, y))) return true;
+    }
+  }
+  return false;
+}
+
+function chooseNearestRoomPair(accessible, inaccessible) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const from of accessible) {
+    const fromCenter = center(from);
+    for (const to of inaccessible) {
+      const distance = manhattan(fromCenter, center(to));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { from, to };
+      }
+    }
+  }
+  return best;
+}
+
+function forceAccessCorridor(dungeon, floorIndex, from, to, rng) {
+  const fromPoint = doorwayPoint(from, center(to));
+  const toPoint = doorwayPoint(to, center(from));
+  const horizontalFirst = rng() > 0.5;
+  const corridorId = `access_repair_${dungeon.corridors.length + 1}`;
+  const cells = [];
+  const path = findAccessRepairPath(dungeon, floorIndex, fromPoint.outside, toPoint.outside);
+  if (path.length) {
+    for (const point of path) carveForcedAccessCell(dungeon.floors[floorIndex], point.x, point.y, corridorId, cells);
+  } else if (horizontalFirst) {
+    carveForcedAccessLine(dungeon, floorIndex, fromPoint.outside.x, fromPoint.outside.y, toPoint.outside.x, fromPoint.outside.y, corridorId, cells);
+    carveForcedAccessLine(dungeon, floorIndex, toPoint.outside.x, fromPoint.outside.y, toPoint.outside.x, toPoint.outside.y, corridorId, cells);
+  } else {
+    carveForcedAccessLine(dungeon, floorIndex, fromPoint.outside.x, fromPoint.outside.y, fromPoint.outside.x, toPoint.outside.y, corridorId, cells);
+    carveForcedAccessLine(dungeon, floorIndex, fromPoint.outside.x, toPoint.outside.y, toPoint.outside.x, toPoint.outside.y, corridorId, cells);
+  }
+  addRoomConnection(dungeon, from, fromPoint, corridorId, "open_chamber");
+  addRoomConnection(dungeon, to, toPoint, corridorId, "open_chamber");
+  dungeon.corridors.push({
+    id: corridorId,
+    floorIndex,
+    cells,
+    width: 1,
+    kind: "accessibility_repair",
+    eventLink: "standard_corridor",
+  });
+}
+
+function findAccessRepairPath(dungeon, floorIndex, start, goal) {
+  const floor = dungeon.floors[floorIndex];
+  const startKey = walkKey(start.x, start.y);
+  const goalKey = walkKey(goal.x, goal.y);
+  const queue = [start];
+  const cameFrom = new Map([[startKey, null]]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    if (current.x === goal.x && current.y === goal.y) break;
+    for (const dir of DIRS) {
+      const next = { x: current.x + dir.dx, y: current.y + dir.dy };
+      if (next.x < 1 || next.y < 1 || next.x >= dungeon.wallGridWidth - 1 || next.y >= dungeon.wallGridHeight - 1) continue;
+      const key = walkKey(next.x, next.y);
+      if (cameFrom.has(key)) continue;
+      const cell = floor.wallGrid[next.y]?.[next.x];
+      if (!cell) continue;
+      if (cell.spaceType === "room" && key !== goalKey && key !== startKey) continue;
+      cameFrom.set(key, current);
+      queue.push(next);
+    }
+  }
+  if (!cameFrom.has(goalKey)) return [];
+  const path = [];
+  let current = goal;
+  while (current) {
+    path.push(current);
+    current = cameFrom.get(walkKey(current.x, current.y));
+  }
+  return path.reverse();
+}
+
+function carveForcedAccessLine(dungeon, floorIndex, x1, y1, x2, y2, corridorId, cells) {
+  const floor = dungeon.floors[floorIndex];
+  const dx = Math.sign(x2 - x1);
+  const dy = Math.sign(y2 - y1);
+  let x = x1;
+  let y = y1;
+  while (x !== x2 || y !== y2) {
+    carveForcedAccessCell(floor, x, y, corridorId, cells);
+    if (x !== x2) x += dx;
+    if (y !== y2) y += dy;
+  }
+  carveForcedAccessCell(floor, x2, y2, corridorId, cells);
+}
+
+function carveForcedAccessCell(floor, x, y, corridorId, cells) {
+  const cell = floor.wallGrid[y]?.[x];
+  if (!cell) return;
+  if (cell.spaceType === "room") return;
+  cell.walkable = true;
+  cell.spaceType = "corridor";
+  cell.corridorId = corridorId;
+  cell.eventLink = cell.eventLink ?? "standard_corridor";
+  cell.labels = [...new Set([...cell.labels, "access_repair"])];
+  cells.push([x, y]);
+}
+
+function walkKey(x, y) {
+  return `${x},${y}`;
+}
+
 function interactWithDoor(dungeon, floorIndex, x, y, direction, options = {}) {
   const cell = getCell(dungeon, floorIndex, x, y);
   const door = cell?.edgeFeatures?.[direction];
   if (!door || door.doorType === "open_chamber" || (door.doorType === "secret" && !door.revealed)) return false;
+  if (!isWithinInteractionRange(dungeon, floorIndex, doorInteractionPoints(door), options.range ?? 1)) {
+    logDungeonMessage(dungeon, `Door at ${x}, ${y} is too far away to interact with.`);
+    return false;
+  }
   dungeon.turn += 1;
   if (door.locked) {
     const check = resolveLockedDoorCheck(dungeon, door, options);
@@ -4803,7 +6272,43 @@ function interactWithDoor(dungeon, floorIndex, x, y, direction, options = {}) {
   }
   door.open = true;
   door.revealed = true;
+  if (door.doorType === "secret") {
+    door.temporaryReveal = false;
+    door.permanentlyRevealed = true;
+  }
   dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Opened door at ${x}, ${y}.` });
+  dungeon.eventLog = dungeon.eventLog.slice(0, 20);
+  return true;
+}
+
+function useStairs(dungeon, floorIndex, x, y, options = {}) {
+  const cell = getCell(dungeon, floorIndex, x, y);
+  const link = cell?.verticalConnection;
+  if (!link) {
+    logDungeonMessage(dungeon, `There are no stairs at ${x}, ${y}.`);
+    return false;
+  }
+  if (!isWithinInteractionRange(dungeon, floorIndex, [{ x, y }], options.range ?? 1)) {
+    logDungeonMessage(dungeon, `Stairs at ${x}, ${y} are too far away to use.`);
+    return false;
+  }
+  const targetCell = getCell(dungeon, link.targetFloorIndex, link.targetWallX, link.targetWallY);
+  if (!targetCell?.walkable) {
+    logDungeonMessage(dungeon, `The stairs at ${x}, ${y} do not have a usable destination yet.`);
+    return false;
+  }
+  dungeon.turn += 1;
+  dungeon.currentFloor = link.targetFloorIndex;
+  dungeon.player.floorIndex = link.targetFloorIndex;
+  dungeon.player.wallX = link.targetWallX;
+  dungeon.player.wallY = link.targetWallY;
+  dungeon.player.facing = link.marker === "stairs_down" ? "south" : "north";
+  markVisited(dungeon, dungeon.player.floorIndex, dungeon.player.wallX, dungeon.player.wallY);
+  const direction = link.marker === "stairs_down" ? "down" : "up";
+  dungeon.eventLog.unshift({
+    turn: dungeon.turn,
+    text: `Used stairs ${direction} to floor ${link.targetFloorIndex + 1}.`,
+  });
   dungeon.eventLog = dungeon.eventLog.slice(0, 20);
   return true;
 }
@@ -4811,6 +6316,10 @@ function interactWithDoor(dungeon, floorIndex, x, y, direction, options = {}) {
 function searchWall(dungeon, floorIndex, x, y, direction, options = {}) {
   const cell = getCell(dungeon, floorIndex, x, y);
   const door = cell?.edgeFeatures?.[direction];
+  if (!isWithinInteractionRange(dungeon, floorIndex, [{ x, y }, ...doorInteractionPoints(door)], options.range ?? 1)) {
+    logDungeonMessage(dungeon, `Wall at ${x}, ${y} is too far away to search.`);
+    return false;
+  }
   dungeon.turn += 1;
   if (!door || door.doorType !== "secret" || door.revealed) {
     dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Searched wall at ${x}, ${y}: nothing found.` });
@@ -4821,6 +6330,10 @@ function searchWall(dungeon, floorIndex, x, y, direction, options = {}) {
   if (check.success) {
     door.revealed = true;
     door.open = false;
+    door.locked = true;
+    door.lockType = door.lockType ?? "generic_key_or_pick";
+    door.temporaryReveal = false;
+    door.permanentlyRevealed = true;
     dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Secret door revealed at ${x}, ${y}. ${check.message}` });
     dungeon.eventLog = dungeon.eventLog.slice(0, 20);
     return true;
@@ -4828,6 +6341,23 @@ function searchWall(dungeon, floorIndex, x, y, direction, options = {}) {
   dungeon.eventLog.unshift({ turn: dungeon.turn, text: `Searched wall at ${x}, ${y}: ${check.message}` });
   dungeon.eventLog = dungeon.eventLog.slice(0, 20);
   return false;
+}
+
+function doorInteractionPoints(door) {
+  if (!door) return [];
+  return [door.inside, door.outside].filter(Boolean);
+}
+
+function isWithinInteractionRange(dungeon, floorIndex, points, range = 1) {
+  if (dungeon.player.floorIndex !== floorIndex) return false;
+  const validPoints = points.filter(Boolean);
+  if (!validPoints.length) return false;
+  return validPoints.some((point) => Math.abs(point.x - dungeon.player.wallX) + Math.abs(point.y - dungeon.player.wallY) <= range);
+}
+
+function logDungeonMessage(dungeon, text) {
+  dungeon.eventLog.unshift({ turn: dungeon.turn, text });
+  dungeon.eventLog = dungeon.eventLog.slice(0, 20);
 }
 
 function resolveLockedDoorCheck(dungeon, door, options = {}) {
@@ -4853,12 +6383,23 @@ function resolveSecretDoorSearchCheck(dungeon, door, options = {}) {
 function revealElfSecretDoorsNearParty(dungeon, floorIndex, radius = 3) {
   const { wallX, wallY } = dungeon.player;
   let revealed = 0;
-  for (const door of dungeon.doors.filter((item) => item.floorIndex === floorIndex && item.doorType === "secret" && !item.revealed)) {
+  for (const door of dungeon.doors.filter((item) => item.floorIndex === floorIndex && item.doorType === "secret")) {
     const nearInside = Math.abs(door.inside.x - wallX) + Math.abs(door.inside.y - wallY) <= radius;
     const nearOutside = Math.abs(door.outside.x - wallX) + Math.abs(door.outside.y - wallY) <= radius;
-    if (!nearInside && !nearOutside) continue;
+    if (!nearInside && !nearOutside) {
+      if (door.temporaryReveal && !door.permanentlyRevealed && !door.open) {
+        door.revealed = false;
+        door.temporaryReveal = false;
+      }
+      continue;
+    }
+    if (door.revealed) continue;
     door.revealed = true;
     door.open = false;
+    door.locked = true;
+    door.lockType = door.lockType ?? "generic_key_or_pick";
+    door.temporaryReveal = true;
+    door.permanentlyRevealed = false;
     revealed += 1;
   }
   if (revealed) {
@@ -4976,9 +6517,7 @@ function rollSimpleEvent(dungeon, cell) {
   return { rolled: true, roll, id: "treasure", title: "Treasure Sign", resolved: false };
 }
 
-
 /* ---- dungeon-renderer.js ---- */
-
 const WALL_COLOR = "#1f1d19";
 const ROOM_COLOR = "rgba(116, 93, 64, 0.44)";
 const CORRIDOR_COLOR = "rgba(79, 104, 98, 0.44)";
@@ -5058,6 +6597,45 @@ const WALL_ASSETS = {
   woodenDoubleDoorNoConnector2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_C.png",
   woodenDoubleDoorWoodConnector2x2: "../Tiles/Dungeon_Wooden_Double_Door_2x2_D.png",
 };
+const SVG_DRESSING_VERSION = "svg-dressing-v1";
+const SVG_VIEWBOX = 100;
+const SVG_ASSETS = {
+  "altar": `<rect x="24" y="36" width="52" height="28" rx="4" fill="#6f6656" stroke="#25221d" stroke-width="5"/><rect x="31" y="29" width="38" height="10" rx="3" fill="#8b7d62" stroke="#25221d" stroke-width="3"/><circle cx="50" cy="50" r="8" fill="#b99a55"/><path d="M30 67h40" stroke="#2d2720" stroke-width="4"/>`,
+  "barrel": `<ellipse cx="50" cy="27" rx="21" ry="11" fill="#6e4428" stroke="#24170f" stroke-width="4"/><path d="M29 27v45c0 7 42 7 42 0V27" fill="#7d5030" stroke="#24170f" stroke-width="4"/><ellipse cx="50" cy="72" rx="21" ry="11" fill="#5c3924" stroke="#24170f" stroke-width="4"/><path d="M34 38h32M34 62h32M42 21v58M58 21v58" stroke="#2c1b12" stroke-width="3"/>`,
+  "bed-simple": `<rect x="22" y="14" width="56" height="74" rx="5" fill="#6b4b35" stroke="#211a15" stroke-width="5"/><rect x="27" y="20" width="46" height="18" rx="4" fill="#d3c7a7" stroke="#211a15" stroke-width="3"/><rect x="27" y="42" width="46" height="38" rx="4" fill="#7b5261" stroke="#211a15" stroke-width="3"/><path d="M30 52h40M30 65h40" stroke="#9b7480" stroke-width="3"/>`,
+  "bone-pile": `<path d="M23 65c11-15 45-17 55 1-10 10-44 12-55-1Z" fill="#d7d0b8" stroke="#29271f" stroke-width="4"/><path d="M27 43l12 12M39 43 27 55M56 39l16 16M72 39 56 55M43 66h27" stroke="#f1e9cf" stroke-width="7" stroke-linecap="round"/><path d="M43 66h27" stroke="#2d2920" stroke-width="2" stroke-linecap="round"/>`,
+  "bookshelf": `<rect x="18" y="14" width="64" height="72" rx="3" fill="#4f3424" stroke="#201611" stroke-width="5"/><path d="M24 34h52M24 55h52M24 76h52" stroke="#211611" stroke-width="4"/><path d="M30 18v15M40 18v15M53 18v15M67 18v15M32 38v16M48 38v16M60 38v16M72 38v16M30 59v16M45 59v16M58 59v16M69 59v16" stroke="#a88a57" stroke-width="6"/>`,
+  "brazier": `<path d="M31 62h38l-7 20H38Z" fill="#55463b" stroke="#211a15" stroke-width="5"/><path d="M28 55c8 9 36 9 44 0l-4 11c-10 6-26 6-36 0Z" fill="#7b6b55" stroke="#211a15" stroke-width="4"/><path d="M42 52c-8-12 5-17 1-29 12 11 4 18 12 28 1-9 9-14 7-24 12 11 13 24 2 32-8 6-19 4-22-7Z" fill="#e28332" stroke="#4a2315" stroke-width="3"/><path d="M48 54c-4-8 4-11 2-21 8 8 3 13 9 21-2 5-8 6-11 0Z" fill="#f4cf67"/>`,
+  "chair": `<rect x="31" y="42" width="38" height="28" rx="4" fill="#7a4f31" stroke="#211611" stroke-width="4"/><rect x="28" y="22" width="44" height="20" rx="4" fill="#654027" stroke="#211611" stroke-width="4"/><path d="M35 70v14M65 70v14" stroke="#211611" stroke-width="5" stroke-linecap="round"/>`,
+  "chest": `<rect x="21" y="39" width="58" height="34" rx="4" fill="#8a552d" stroke="#211611" stroke-width="5"/><path d="M23 45c7-18 47-18 54 0" fill="#a86e35" stroke="#211611" stroke-width="5"/><path d="M50 39v34M25 55h50" stroke="#3b2719" stroke-width="4"/><rect x="44" y="53" width="12" height="12" rx="2" fill="#c29a4a" stroke="#211611" stroke-width="2"/>`,
+  "crate-stack": `<rect x="16" y="21" width="32" height="32" fill="#8b6238" stroke="#211611" stroke-width="4"/><rect x="51" y="27" width="32" height="32" fill="#76502f" stroke="#211611" stroke-width="4"/><rect x="32" y="58" width="36" height="27" fill="#9a7040" stroke="#211611" stroke-width="4"/><path d="M18 23l28 28M46 23 18 51M53 29l28 28M81 29 53 57M34 60l32 23M66 60 34 83" stroke="#3a281b" stroke-width="3"/>`,
+  "crystal-cluster": `<path d="M21 73 33 34l16 38Z" fill="#76b9c5" stroke="#16292f" stroke-width="4"/><path d="M43 78 55 18l23 60Z" fill="#9dd0da" stroke="#16292f" stroke-width="4"/><path d="M36 79 45 45l15 34Z" fill="#5f9fab" stroke="#16292f" stroke-width="4"/><path d="M52 24 45 77M33 39l7 33" stroke="#d2f4f6" stroke-width="3" opacity=".75"/>`,
+  "floor-ice": `<rect x="10" y="10" width="80" height="80" rx="8" fill="#8ec8d7" opacity=".42"/><path d="M16 40c20-8 34 11 56-1M20 62c18 9 38-5 60 8M38 14c-8 28 10 43 2 70M64 18c7 20-8 39 8 62" stroke="#dff7fb" stroke-width="4" opacity=".72"/>`,
+  "fungal-patch": `<path d="M20 72c9-20 54-22 64 0-18 9-45 10-64 0Z" fill="#4e5f42" stroke="#172111" stroke-width="4"/><circle cx="36" cy="47" r="13" fill="#b86f6e" stroke="#241414" stroke-width="4"/><circle cx="62" cy="43" r="16" fill="#d6c879" stroke="#24200f" stroke-width="4"/><circle cx="51" cy="63" r="10" fill="#8bbf8d" stroke="#132113" stroke-width="4"/><path d="M36 60v15M62 58v17M51 71v9" stroke="#d9d0b4" stroke-width="5"/>`,
+  "hell-chain": `<path d="M18 38c18-20 28 20 44 0s28 20 20 28c-18 20-28-20-44 0s-28-20-20-28Z" fill="none" stroke="#2a2422" stroke-width="12" stroke-linecap="round"/><path d="M18 38c18-20 28 20 44 0s28 20 20 28c-18 20-28-20-44 0s-28-20-20-28Z" fill="none" stroke="#695f56" stroke-width="5" stroke-linecap="round"/>`,
+  "lava-crack-overlay": `<path d="M12 70 34 54l-8-24 22 19 18-32-5 36 27-5-29 16 10 19-22-14-14 19 2-21Z" fill="#e65e2d" opacity=".72"/><path d="M12 70 34 54l-8-24 22 19 18-32-5 36 27-5-29 16 10 19-22-14-14 19 2-21Z" fill="none" stroke="#3b1710" stroke-width="4" opacity=".85"/>`,
+  "mist-cloud": `<path d="M18 61c-9-17 17-28 30-16 11-24 47-1 31 19 18 3 10 26-8 22H30c-18 1-27-12-12-25Z" fill="#d4d9d1" opacity=".36"/><path d="M22 66h48M16 76h58M33 53h54" stroke="#eef2e9" stroke-width="6" opacity=".28" stroke-linecap="round"/>`,
+  "pillar-round": `<circle cx="50" cy="50" r="32" fill="#6f6a5d" stroke="#211e1a" stroke-width="6"/><circle cx="50" cy="50" r="20" fill="#8b8372" stroke="#39342c" stroke-width="4"/><circle cx="50" cy="50" r="8" fill="#28251f"/><path d="M50 18v20M50 62v20M18 50h20M62 50h20" stroke="#aaa08a" stroke-width="3" opacity=".55"/>`,
+  "pit-black": `<path d="M15 47c2-31 62-38 73-5 11 33-45 55-66 31-7-8-9-17-7-26Z" fill="#080808" stroke="#241e18" stroke-width="6"/><path d="M24 47c13 9 41 10 55-2M28 61c13 6 33 8 47 0" stroke="#2b2b2b" stroke-width="4" opacity=".8"/>`,
+  "root-tangle": `<path d="M15 74c25-20 42-9 70-41M23 29c17 21 38 21 55 44M13 50c29-8 49 0 76 4M48 15c-3 23 7 45-11 70" fill="none" stroke="#3c2c18" stroke-width="7" stroke-linecap="round"/><path d="M15 74c25-20 42-9 70-41M23 29c17 21 38 21 55 44M13 50c29-8 49 0 76 4M48 15c-3 23 7 45-11 70" fill="none" stroke="#80613a" stroke-width="3" stroke-linecap="round"/>`,
+  "rubble": `<path d="M17 68 32 44l25 5 11 27-32 8Z" fill="#716b5e" stroke="#211e1a" stroke-width="4"/><path d="M56 35 76 44l-4 21-22-4Z" fill="#5f5a50" stroke="#211e1a" stroke-width="4"/><path d="M28 24 42 31l-5 13-17-3Z" fill="#898271" stroke="#211e1a" stroke-width="4"/><circle cx="75" cy="75" r="6" fill="#4e493f"/><circle cx="21" cy="49" r="5" fill="#4e493f"/>`,
+  "rune-floor-decal": `<circle cx="50" cy="50" r="36" fill="none" stroke="#77b8d5" stroke-width="5" opacity=".72"/><circle cx="50" cy="50" r="20" fill="none" stroke="#c9a6ff" stroke-width="3" opacity=".7"/><path d="M50 14v72M14 50h72M25 25l50 50M75 25 25 75" stroke="#b8ecff" stroke-width="3" opacity=".55"/><path d="M50 28 61 59 34 40h32L39 59Z" fill="none" stroke="#e6f8ff" stroke-width="3" opacity=".82"/>`,
+  "sarcophagus": `<rect x="27" y="13" width="46" height="74" rx="8" fill="#777061" stroke="#211e1a" stroke-width="6"/><path d="M33 28h34M34 71h32M50 22v55" stroke="#3a352d" stroke-width="4"/><path d="M39 39h22v17H39Z" fill="#9a927d" stroke="#312d26" stroke-width="3"/>`,
+  "statue": `<circle cx="50" cy="25" r="12" fill="#8a8373" stroke="#211e1a" stroke-width="4"/><path d="M36 39h28l8 31H28Z" fill="#6f695c" stroke="#211e1a" stroke-width="5"/><rect x="25" y="70" width="50" height="15" rx="3" fill="#827968" stroke="#211e1a" stroke-width="4"/><path d="M38 49h24M34 60h32" stroke="#aca18b" stroke-width="3" opacity=".6"/>`,
+  "table-long": `<rect x="16" y="28" width="68" height="44" rx="7" fill="#744b2d" stroke="#211611" stroke-width="5"/><path d="M24 38h52M24 50h52M24 62h52" stroke="#a46f3b" stroke-width="4"/><path d="M25 28v-8M75 28v-8M25 72v8M75 72v8" stroke="#211611" stroke-width="5" stroke-linecap="round"/>`,
+  "table-round": `<circle cx="50" cy="50" r="32" fill="#7e5635" stroke="#211611" stroke-width="5"/><circle cx="50" cy="50" r="20" fill="#9b6a3d" stroke="#3b2719" stroke-width="3"/><path d="M50 18v64M18 50h64" stroke="#4b311d" stroke-width="4" opacity=".7"/>`,
+  "void-rift": `<path d="M22 50c7-35 51-44 62-8 13 43-53 48-63 22-2-5-2-10 1-14Z" fill="#171026" stroke="#09050d" stroke-width="6"/><path d="M31 52c12-20 32-26 42-5M34 65c15 9 30 8 43-7" fill="none" stroke="#8c67d9" stroke-width="5" opacity=".65"/><circle cx="51" cy="52" r="10" fill="#0a0610"/>`,
+  "water-pool": `<path d="M16 52c9-28 57-35 70-2 11 29-46 41-65 23-7-6-8-14-5-21Z" fill="#3d91a7" opacity=".56" stroke="#12313d" stroke-width="5"/><path d="M25 54c15 9 34-10 54-1M28 67c18 7 31-5 47 2" fill="none" stroke="#bfefff" stroke-width="4" opacity=".52"/>`,
+  "water-shallow-overlay": `<rect x="10" y="12" width="80" height="76" rx="10" fill="#4ca2b8" opacity=".34"/><path d="M18 38c20 10 34-10 58 0M22 58c18 8 35-8 58 2M15 76c24 8 42-5 70 0" fill="none" stroke="#c9f7ff" stroke-width="5" opacity=".38"/>`,
+  "weapon-rack": `<rect x="22" y="61" width="56" height="12" rx="3" fill="#5b3a24" stroke="#211611" stroke-width="4"/><path d="M30 25v42M46 19v48M62 24v43M72 30v37" stroke="#8c8f85" stroke-width="5" stroke-linecap="round"/><path d="M25 28h10M41 20h10M58 27h10M68 33h10" stroke="#d2d2bd" stroke-width="3" stroke-linecap="round"/>`,
+};
+const SVG_ASSET_META = {
+  "bed-simple": { w: 2, h: 2 },
+  "bookshelf": { w: 1, h: 2 },
+  "sarcophagus": { w: 2, h: 3 },
+  "table-long": { w: 3, h: 2 },
+  "weapon-rack": { w: 2, h: 1 },
+};
 
 class DungeonRenderer {
   constructor(canvas) {
@@ -5132,6 +6710,7 @@ class DungeonRenderer {
     } else {
       this.drawWalls(dungeon, cellSize);
     }
+    await this.drawSvgDressing(dungeon, cellSize);
     await this.drawDoors(dungeon, cellSize);
     this.drawEvents(dungeon, cellSize);
     this.drawFloorConnections(dungeon, cellSize);
@@ -5410,9 +6989,37 @@ class DungeonRenderer {
           drawFallbackDoor(ctx, x, y, cellSize, door);
         }
         ctx.restore();
+        if (door.doorType === "secret" && door.revealed) drawSecretDoorMarker(ctx, x, y, cellSize, door.wall);
         if (door.locked && door.revealed) drawLockMarker(ctx, x, y, cellSize, door.wall);
       }
     }
+  }
+
+  async drawSvgDressing(dungeon, cellSize) {
+    const ctx = this.ctx;
+    const floor = dungeon.floors[dungeon.currentFloor];
+    const rooms = (dungeon.rooms ?? [])
+      .filter((room) => room.floorIndex === undefined || room.floorIndex === dungeon.currentFloor)
+      .filter((room) => room.width >= 2 && room.height >= 2);
+    for (const room of rooms) {
+      const placements = svgDressingPlacements(dungeon, floor, room);
+      for (const placement of placements) {
+        const img = await this.loadSvgAsset(placement.assetId);
+        if (!img) continue;
+        const x = placement.x * cellSize;
+        const y = placement.y * cellSize;
+        ctx.save();
+        ctx.globalAlpha = placement.alpha ?? 0.86;
+        drawAsset(ctx, img, x, y, placement.width * cellSize, placement.height * cellSize, placement.rotation ?? 0);
+        ctx.restore();
+      }
+    }
+  }
+
+  loadSvgAsset(assetId) {
+    const svg = SVG_ASSETS[assetId];
+    if (!svg) return Promise.resolve(null);
+    return this.loadImage(svgAssetDataUrl(assetId, svg));
   }
 
   drawEvents(dungeon, cellSize) {
@@ -5605,6 +7212,198 @@ function drawAsset(ctx, img, x, y, width, height, rotation) {
   ctx.restore();
 }
 
+function svgAssetDataUrl(assetId, body) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_VIEWBOX} ${SVG_VIEWBOX}" role="img" aria-label="${assetId}">${body}</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function svgDressingPlacements(dungeon, floor, room) {
+  if (!roomHasVisibleCell(floor, room)) return [];
+  const tags = roomSearchText(dungeon, room);
+  const plan = dressingPlanForRoom(dungeon, room, tags);
+  const forceDressing = hasAnyTag(tags, ["altar", "armory", "barracks", "bedroom", "crypt", "flooded", "library", "ritual", "shrine", "storage", "temple", "tomb", "vault", "water"]);
+  if (!forceDressing && hashToUnit(`${dungeon.dungeonId}:${room.id}:dressing-skip`) < 0.34) return [];
+
+  const maxItems = Math.min(6, Math.max(1, 1 + Math.floor((room.width * room.height) / 18)));
+  const desired = Math.min(maxItems, forceDressing ? Math.max(2, plan.length) : Math.min(2, plan.length));
+  const placements = [];
+  const occupied = new Set();
+  const blocked = roomDoorBlockedCells(room);
+  let attempts = 0;
+  while (placements.length < desired && attempts < desired * 10) {
+    const assetId = plan[attempts % plan.length];
+    const meta = SVG_ASSET_META[assetId] ?? { w: 1, h: 1 };
+    const rotate = shouldRotateDressing(room, assetId, meta, attempts, dungeon.dungeonId);
+    const width = rotate ? meta.h : meta.w;
+    const height = rotate ? meta.w : meta.h;
+    const spot = roomDressingSpot(room, assetId, width, height, attempts, dungeon.dungeonId);
+    attempts += 1;
+    if (!spot || !placementFits(floor, spot.x, spot.y, width, height, occupied, blocked)) continue;
+    markOccupied(occupied, spot.x, spot.y, width, height);
+    placements.push({
+      assetId,
+      x: spot.x,
+      y: spot.y,
+      width,
+      height,
+      rotation: rotate ? Math.PI / 2 : 0,
+      alpha: assetId.includes("overlay") || assetId === "mist-cloud" || assetId === "floor-ice" ? 0.7 : 0.88,
+    });
+  }
+  return placements;
+}
+
+function roomHasVisibleCell(floor, room) {
+  for (let y = room.y; y < room.y + room.height; y += 1) {
+    for (let x = room.x; x < room.x + room.width; x += 1) {
+      const cell = floor.wallGrid[y]?.[x];
+      if (cell?.walkable && cell.spaceType === "room") return true;
+    }
+  }
+  return false;
+}
+
+function roomSearchText(dungeon, room) {
+  const theme = dungeon.theme ?? {};
+  const parts = [
+    room.id,
+    room.key,
+    room.roomType,
+    room.templateKey,
+    room.templateLabel,
+    room.label,
+    room.geomorphId,
+    room.districtType,
+    room.precinctType,
+    theme.key,
+    theme.label,
+    dungeon.themeKey,
+    dungeon.dungeonType,
+    ...(room.tags ?? []),
+    ...(theme.tags ?? []),
+  ];
+  return parts.filter(Boolean).join(" ").toLowerCase().replace(/[_-]+/g, " ");
+}
+
+function dressingPoolForRoom(tags) {
+  if (hasAnyTag(tags, ["bath", "cistern", "flooded", "pool", "sea", "sluice", "water"])) return ["water-shallow-overlay", "water-pool", "barrel", "rubble"];
+  if (hasAnyTag(tags, ["hell", "demonic", "infernal"])) return ["lava-crack-overlay", "hell-chain", "bone-pile", "altar", "void-rift"];
+  if (hasAnyTag(tags, ["frozen", "ice", "icereach"])) return ["floor-ice", "crystal-cluster", "rubble"];
+  if (hasAnyTag(tags, ["cave", "cavern", "rough", "underdark"])) return ["rubble", "fungal-patch", "crystal-cluster", "water-pool"];
+  if (hasAnyTag(tags, ["swamp", "shadowfen", "tanglewood", "wild"])) return ["root-tangle", "fungal-patch", "water-shallow-overlay", "rubble"];
+  if (hasAnyTag(tags, ["crypt", "barrow", "burial", "ossuary", "tomb", "undead"])) return ["sarcophagus", "bone-pile", "statue", "rubble", "mist-cloud"];
+  if (hasAnyTag(tags, ["occult", "ritual", "summoning", "arcane", "laboratory", "magic"])) return ["rune-floor-decal", "altar", "table-long", "bookshelf", "void-rift"];
+  if (hasAnyTag(tags, ["temple", "shrine", "chapel", "religious", "cult", "oracle", "sun", "moon"])) return ["altar", "statue", "brazier", "rune-floor-decal", "pillar-round"];
+  if (hasAnyTag(tags, ["library", "archive", "study", "records"])) return ["bookshelf", "table-long", "chair", "rune-floor-decal"];
+  if (hasAnyTag(tags, ["barracks", "guard", "military", "armory", "watch"])) return ["weapon-rack", "bed-simple", "table-long", "crate-stack"];
+  if (hasAnyTag(tags, ["bedroom", "living", "quarters", "suite", "servant"])) return ["bed-simple", "table-round", "chair", "barrel"];
+  if (hasAnyTag(tags, ["kitchen", "mess", "banquet", "larder"])) return ["table-long", "barrel", "crate-stack", "table-round"];
+  if (hasAnyTag(tags, ["storage", "store", "pantry", "supply", "trade", "market"])) return ["crate-stack", "barrel", "chest"];
+  if (hasAnyTag(tags, ["treasure", "vault", "reliquary", "sealed"])) return ["chest", "statue", "crate-stack", "rune-floor-decal"];
+  if (hasAnyTag(tags, ["ruin", "ravaged", "collapsed", "old"])) return ["rubble", "pillar-round", "statue", "crate-stack"];
+  return ["table-round", "crate-stack", "rubble", "pillar-round"];
+}
+
+function hasAnyTag(text, tags) {
+  return tags.some((tag) => text.includes(tag));
+}
+
+function dressingPlanForRoom(dungeon, room, tags) {
+  const pool = dressingPoolForRoom(tags);
+  let plan;
+  if (hasAnyTag(tags, ["bedroom", "living", "quarters", "suite", "servant"])) plan = ["bed-simple", "chest", "table-round", "chair"];
+  else if (hasAnyTag(tags, ["library", "archive", "study", "records"])) plan = ["bookshelf", "bookshelf", "table-long", "chair", "rune-floor-decal"];
+  else if (hasAnyTag(tags, ["barracks", "guard", "military", "armory", "watch"])) plan = ["weapon-rack", "weapon-rack", "crate-stack", "table-long", "bed-simple"];
+  else if (hasAnyTag(tags, ["storage", "store", "pantry", "supply", "trade", "market"])) plan = ["crate-stack", "barrel", "crate-stack", "chest"];
+  else if (hasAnyTag(tags, ["kitchen", "mess", "banquet", "larder"])) plan = ["table-long", "table-long", "barrel", "crate-stack"];
+  else if (hasAnyTag(tags, ["crypt", "barrow", "burial", "ossuary", "tomb", "undead"])) plan = ["sarcophagus", "sarcophagus", "bone-pile", "rubble", "statue"];
+  else if (hasAnyTag(tags, ["temple", "shrine", "chapel", "religious", "cult", "oracle", "sun", "moon"])) plan = ["altar", "brazier", "statue", "pillar-round", "rune-floor-decal"];
+  else if (hasAnyTag(tags, ["occult", "ritual", "summoning", "arcane", "laboratory", "magic"])) plan = ["rune-floor-decal", "altar", "table-long", "bookshelf", "void-rift"];
+  else plan = pool;
+
+  const offset = Math.floor(hashToUnit(`${dungeon.dungeonId}:${room.id}:plan-offset`) * plan.length);
+  return [...plan.slice(offset), ...plan.slice(0, offset), ...pool].filter((assetId, index, list) => list.indexOf(assetId) === index || assetId === "bookshelf" || assetId === "sarcophagus" || assetId === "table-long" || assetId === "crate-stack");
+}
+
+function shouldRotateDressing(room, assetId, meta, attempt, seed) {
+  if (meta.w === meta.h) return false;
+  if (assetId === "bed-simple") return room.height >= room.width;
+  if (assetId === "bookshelf" || assetId === "weapon-rack") return room.width < room.height;
+  if (assetId === "sarcophagus" || assetId === "table-long") return room.height > room.width || hashToUnit(`${seed}:${room.id}:rot:${assetId}:${attempt}`) > 0.64;
+  return hashToUnit(`${seed}:${room.id}:rot:${assetId}:${attempt}`) > 0.5;
+}
+
+function roomDoorBlockedCells(room) {
+  const blocked = new Set();
+  for (const door of room.doors ?? []) {
+    for (const point of [door.inside, door.outside]) {
+      if (!point) continue;
+      for (let y = point.y - 1; y <= point.y + 1; y += 1) {
+        for (let x = point.x - 1; x <= point.x + 1; x += 1) {
+          if (x >= room.x && x < room.x + room.width && y >= room.y && y < room.y + room.height) blocked.add(`${x},${y}`);
+        }
+      }
+    }
+  }
+  return blocked;
+}
+
+function roomDressingSpot(room, assetId, width, height, attempt, seed) {
+  if (room.width < width || room.height < height) return null;
+  const edgeSpots = [
+    { x: room.x + 1, y: room.y + 1 },
+    { x: room.x + room.width - width - 1, y: room.y + 1 },
+    { x: room.x + 1, y: room.y + room.height - height - 1 },
+    { x: room.x + room.width - width - 1, y: room.y + room.height - height - 1 },
+    { x: room.x + Math.floor((room.width - width) / 2), y: room.y + 1 },
+    { x: room.x + Math.floor((room.width - width) / 2), y: room.y + room.height - height - 1 },
+    { x: room.x + 1, y: room.y + Math.floor((room.height - height) / 2) },
+    { x: room.x + room.width - width - 1, y: room.y + Math.floor((room.height - height) / 2) },
+  ];
+  const centerSpots = [
+    { x: room.x + Math.floor((room.width - width) / 2), y: room.y + Math.floor((room.height - height) / 2) },
+    { x: room.x + Math.floor(room.width / 2) - width, y: room.y + Math.floor(room.height / 2) },
+    { x: room.x + Math.floor(room.width / 2), y: room.y + Math.floor(room.height / 2) - height },
+  ];
+  const candidates = (centerpieceDressing(assetId) ? [...centerSpots, ...edgeSpots] : [...edgeSpots, ...centerSpots])
+    .filter((spot) => spot.x >= room.x && spot.y >= room.y && spot.x + width <= room.x + room.width && spot.y + height <= room.y + room.height);
+  if (!candidates.length) return null;
+  const index = Math.floor(hashToUnit(`${seed}:${room.id}:spot:${attempt}`) * candidates.length);
+  return candidates[index] ?? candidates[0];
+}
+
+function centerpieceDressing(assetId) {
+  return ["altar", "pit-black", "rune-floor-decal", "sarcophagus", "table-long", "table-round", "void-rift", "water-pool"].includes(assetId);
+}
+
+function placementFits(floor, x, y, width, height, occupied, blocked) {
+  for (let py = y; py < y + height; py += 1) {
+    for (let px = x; px < x + width; px += 1) {
+      const cell = floor.wallGrid[py]?.[px];
+      if (!cell?.walkable || cell.spaceType !== "room") return false;
+      if (occupied.has(`${px},${py}`)) return false;
+      if (blocked.has(`${px},${py}`)) return false;
+    }
+  }
+  return true;
+}
+
+function markOccupied(occupied, x, y, width, height) {
+  for (let py = y; py < y + height; py += 1) {
+    for (let px = x; px < x + width; px += 1) occupied.add(`${px},${py}`);
+  }
+}
+
+function hashToUnit(input) {
+  let hash = 2166136261;
+  const text = String(input);
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+}
+
 function drawRotatedAsset(ctx, img, x, y, width, height, rotation) {
   if (!img) return;
   ctx.save();
@@ -5722,7 +7521,7 @@ function staticMapCacheKey(dungeon, cellSize, options) {
     .filter((door) => door.floorIndex === dungeon.currentFloor)
     .map((door) => `${door.id}:${door.revealed ? 1 : 0}:${door.open ? 1 : 0}:${door.locked ? 1 : 0}`)
     .join("|");
-  return `${dungeon.dungeonId}:${dungeon.currentFloor}:${cellSize}:${artMode}:${doorState}`;
+  return `${dungeon.dungeonId}:${dungeon.currentFloor}:${cellSize}:${artMode}:${SVG_DRESSING_VERSION}:${doorState}`;
 }
 
 function pruneCanvasCache(cache, maxItems) {
@@ -5831,6 +7630,25 @@ function drawLockMarker(ctx, x, y, cellSize, wall) {
   ctx.restore();
 }
 
+function drawSecretDoorMarker(ctx, x, y, cellSize, wall) {
+  const marker = Math.max(4, cellSize * 0.24);
+  let px = x + cellSize / 2;
+  let py = y + cellSize / 2;
+  if (wall === "north") py = y;
+  if (wall === "south") py = y + cellSize;
+  if (wall === "west") px = x;
+  if (wall === "east") px = x + cellSize;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = "rgba(76, 52, 123, 0.9)";
+  ctx.strokeStyle = "rgba(220, 206, 255, 0.9)";
+  ctx.lineWidth = Math.max(1, cellSize * 0.045);
+  ctx.fillRect(-marker / 2, -marker / 2, marker, marker);
+  ctx.strokeRect(-marker / 2, -marker / 2, marker, marker);
+  ctx.restore();
+}
+
 function describeCell(dungeon) {
   const cell = getCell(dungeon, dungeon.player.floorIndex, dungeon.player.wallX, dungeon.player.wallY);
   if (!cell) return [];
@@ -5880,9 +7698,7 @@ function labelColor(cell) {
   return "#6d665b";
 }
 
-
 /* ---- app.js ---- */
-
 const els = {
   size: document.getElementById("sizeSelect"),
   floors: document.getElementById("floorCountInput"),
@@ -6042,9 +7858,21 @@ els.canvas.addEventListener("click", async (event) => {
   const target = canvasInteractionTarget(event);
   if (!target) return;
   const cell = dungeon.floors[dungeon.currentFloor]?.wallGrid[target.y]?.[target.x];
+  if (cell?.verticalConnection) {
+    const label = cell.verticalConnection.marker === "stairs_down"
+      ? `descend to floor ${cell.verticalConnection.targetFloorIndex + 1}`
+      : `ascend to floor ${cell.verticalConnection.targetFloorIndex + 1}`;
+    if (!window.confirm(`Use these stairs to ${label}?`)) return;
+    const changed = useStairs(dungeon, dungeon.currentFloor, target.x, target.y, {
+      range: 1,
+    });
+    await refresh();
+    if (changed) centerOnParty();
+    return;
+  }
   const feature = cell?.edgeFeatures?.[target.edge];
   let changed = false;
-  if (feature && feature.doorType !== "secret") {
+  if (feature && (feature.doorType !== "secret" || feature.revealed)) {
     changed = interactWithDoor(dungeon, dungeon.currentFloor, target.x, target.y, target.edge, {
       autoPass: true,
     });
@@ -6259,3 +8087,24 @@ function isTypingTarget(target) {
   </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

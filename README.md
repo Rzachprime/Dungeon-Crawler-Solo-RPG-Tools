@@ -77,7 +77,7 @@ The prototype uses ES modules and sibling tile assets, so it should be served fr
 
 - Wall art is only first-pass aligned and still needs per-piece placement tuning.
 - Reveal all does not change the saved dungeon state; it only changes the current view.
-- The old logical line-wall renderer is still available by turning off `Art walls`.
+- SVG art walls are enabled by default. The old logical line-wall renderer is still available by turning off `Art walls`.
 - Debug labels are for alignment testing and are not intended as final UI.
 - Movement now checks cell edge types, so walls block travel even when both adjacent cells are walkable.
 - Door/open-chamber edge data exists, but normal doors do not yet require interaction to pass through.
